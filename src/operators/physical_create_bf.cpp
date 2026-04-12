@@ -4,6 +4,7 @@
 #include "duckdb/parallel/pipeline.hpp"
 #include "debug_utils.hpp"
 #include "rpt_profiling.hpp"
+#include "probe_empty_registry.hpp"
 #include <duckdb/parallel/meta_pipeline.hpp>
 #include "duckdb/planner/filter/bloom_filter.hpp"
 #include "duckdb/planner/filter/constant_filter.hpp"
@@ -187,6 +188,13 @@ CreateBFGlobalSinkState::CreateBFGlobalSinkState(ClientContext &context, const P
 			entry.second->Initialize(context, op.estimated_cardinality);
 		}
 	}
+	// resolve shared probe-empty flag once (single-threaded); forward pass only
+	if (op.is_forward_pass) {
+		auto reg = GetProbeEmptyRegistry(context);
+		if (reg) {
+			probe_empty_flag = reg->GetOrCreate(op.bf_operation->probe_table_idx);
+		}
+	}
 }
 
 CreateBFLocalSinkState::CreateBFLocalSinkState(ClientContext &context, const PhysicalCreateBF &op)
@@ -206,6 +214,13 @@ SinkResultType PhysicalCreateBF::Sink(ExecutionContext &context, DataChunk &chun
 			profiling_stats = prof->RegisterCreateBF(bf_operation->build_table_idx, bf_operation->probe_columns,
 			                                         bf_operation->sequence_number, is_forward_pass);
 		}
+	}
+
+	// short-circuit: if probe side is already known empty, don't ingest into BF.
+	// single relaxed load, lock-free.
+	auto &gstate = input.global_state.Cast<CreateBFGlobalSinkState>();
+	if (gstate.probe_empty_flag && gstate.probe_empty_flag->load(std::memory_order_relaxed)) {
+		return SinkResultType::FINISHED;
 	}
 
 	CreateBFLocalSinkState &local_state = input.local_state.Cast<CreateBFLocalSinkState>();
@@ -412,7 +427,13 @@ SinkFinalizeType PhysicalCreateBF::Finalize(Pipeline &pipeline, Event &event, Cl
 		}
 	}
 
-	// 3. push dynamic filters to table scans
+	// 4. if this forward CREATE_BF produced an empty BF, signal sibling CREATE_BFs
+	// targeting the same probe that the probe side will be empty (relaxed store, lock-free).
+	if (gsink.probe_empty_flag && actual_rows == 0) {
+		gsink.probe_empty_flag->store(true, std::memory_order_relaxed);
+	}
+
+	// 5. push dynamic filters to table scans
 	PushDynamicFilters(*this, gsink, context);
 
 	return SinkFinalizeType::READY;

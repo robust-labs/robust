@@ -6,6 +6,7 @@
 #include "duckdb/parallel/meta_pipeline.hpp"
 #include "debug_utils.hpp"
 #include "rpt_profiling.hpp"
+#include "probe_empty_registry.hpp"
 
 namespace duckdb {
 
@@ -145,6 +146,12 @@ OperatorResultType PhysicalUseBF::ExecuteInternal(ExecutionContext &context, Dat
 		if (bf->IsEmpty()) {
 			string build_table = bf_operation ? "table_" + std::to_string(bf_operation->build_table_idx) : "unknown";
 			D_PRINTF("Bloom filter empty for %s", build_table.c_str());
+			// signal any CREATE_BF siblings targeting this probe that it will be empty
+			auto reg = GetProbeEmptyRegistry(context.client);
+			if (reg) {
+				auto flag = reg->GetOrCreate(bf_operation->probe_table_idx);
+				flag->store(true, std::memory_order_relaxed);
+			}
 			// empty filter means no matches possible
 			probe_timer.reset();
 			if (profiling_stats) {

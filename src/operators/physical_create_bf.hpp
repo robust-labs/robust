@@ -121,6 +121,11 @@ public:
 
 	// min-max tracking for dynamic filter pushdown
 	vector<ColumnMinMax> column_min_max;
+
+	// shared empty-probe flag (forward pass). set by any sibling CREATE_BF / USE_BF
+	// targeting the same probe table when it detects the probe will be empty.
+	// read lock-free (relaxed) in Sink to short-circuit BF build.
+	shared_ptr<std::atomic<bool>> probe_empty_flag;
 };
 
 class CreateBFLocalSourceState : public LocalSourceState {
