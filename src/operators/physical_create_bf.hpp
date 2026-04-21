@@ -6,6 +6,7 @@
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include <duckdb/common/types/column/column_data_scan_states.hpp>
 #include "duckdb/planner/table_filter.hpp"
+#include "duckdb/common/types/value_map.hpp"
 
 namespace duckdb {
 
@@ -99,6 +100,11 @@ struct ColumnMinMax {
 	bool has_value = false;
 };
 
+struct ColumnDistinct {
+	value_set_t values;
+	bool over_threshold = false;
+};
+
 class CreateBFLocalSinkState : public LocalSinkState {
 public:
 	CreateBFLocalSinkState(ClientContext &context, const PhysicalCreateBF &op);
@@ -106,6 +112,7 @@ public:
 	ClientContext &client_context;
 	unique_ptr<ColumnDataCollection> local_data;
 	vector<ColumnMinMax> local_min_max;
+	vector<ColumnDistinct> local_distinct;
 };
 
 class CreateBFGlobalSinkState : public GlobalSinkState {
@@ -121,6 +128,10 @@ public:
 
 	// min-max tracking for dynamic filter pushdown
 	vector<ColumnMinMax> column_min_max;
+
+	// distinct-value tracking for IN-filter pushdown
+	vector<ColumnDistinct> column_distinct;
+	idx_t distinct_threshold = 50;
 
 	// shared empty-probe flag (forward pass). set by any sibling CREATE_BF / USE_BF
 	// targeting the same probe table when it detects the probe will be empty.

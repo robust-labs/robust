@@ -9,6 +9,9 @@
 #include "duckdb/planner/filter/bloom_filter.hpp"
 #include "duckdb/planner/filter/constant_filter.hpp"
 #include "duckdb/planner/filter/selectivity_optional_filter.hpp"
+#include "duckdb/planner/filter/in_filter.hpp"
+#include "duckdb/planner/filter/optional_filter.hpp"
+#include "duckdb/optimizer/filter_combiner.hpp"
 #include "duckdb/main/config.hpp"
 
 namespace duckdb {
@@ -194,15 +197,21 @@ CreateBFGlobalSinkState::CreateBFGlobalSinkState(ClientContext &context, const P
 		if (reg) {
 			probe_empty_flag = reg->GetOrCreate(op.bf_operation->probe_table_idx);
 		}
+		Value v;
+		if (context.TryGetCurrentSetting("rpt_dynamic_or_filter_threshold", v)) {
+			distinct_threshold = v.GetValue<uint64_t>();
+		}
+		column_distinct.resize(op.bound_column_indices.size());
 	}
 }
 
 CreateBFLocalSinkState::CreateBFLocalSinkState(ClientContext &context, const PhysicalCreateBF &op)
     : client_context(context) {
 	local_data = make_uniq<ColumnDataCollection>(client_context, op.types);
-	// initialize min-max tracking for each build column
+	// initialize min-max and distinct tracking for each build column
 	if (op.is_forward_pass) {
 		local_min_max.resize(op.bound_column_indices.size());
+		local_distinct.resize(op.bound_column_indices.size());
 	}
 }
 
@@ -253,6 +262,34 @@ SinkResultType PhysicalCreateBF::Sink(ExecutionContext &context, DataChunk &chun
 		}
 	}
 
+	// track distinct values up to threshold+1 (overflow stops further insertion)
+	if (is_forward_pass && !local_state.local_distinct.empty() && chunk.size() > 0) {
+		const idx_t threshold = gstate.distinct_threshold;
+		for (idx_t i = 0; i < bound_column_indices.size() && i < local_state.local_distinct.size(); i++) {
+			auto &cd = local_state.local_distinct[i];
+			if (cd.over_threshold) {
+				continue;
+			}
+			idx_t col_idx = bound_column_indices[i];
+			if (col_idx >= chunk.ColumnCount()) {
+				continue;
+			}
+			auto &vec = chunk.data[col_idx];
+			for (idx_t row = 0; row < chunk.size(); row++) {
+				Value val = vec.GetValue(row);
+				if (val.IsNull()) {
+					continue;
+				}
+				cd.values.insert(std::move(val));
+				if (cd.values.size() > threshold) {
+					cd.over_threshold = true;
+					cd.values.clear();
+					break;
+				}
+			}
+		}
+	}
+
 	return SinkResultType::NEED_MORE_INPUT;
 }
 
@@ -281,6 +318,31 @@ SinkCombineResultType PhysicalCreateBF::Combine(ExecutionContext &context, Opera
 				}
 				if (local_mm.max_val > global_mm.max_val) {
 					global_mm.max_val = local_mm.max_val;
+				}
+			}
+		}
+	}
+
+	// merge local distinct values into global, propagating over_threshold
+	if (!local_state.local_distinct.empty()) {
+		const idx_t threshold = gstate.distinct_threshold;
+		for (idx_t i = 0; i < local_state.local_distinct.size() && i < gstate.column_distinct.size(); i++) {
+			auto &local_cd = local_state.local_distinct[i];
+			auto &global_cd = gstate.column_distinct[i];
+			if (global_cd.over_threshold) {
+				continue;
+			}
+			if (local_cd.over_threshold) {
+				global_cd.over_threshold = true;
+				global_cd.values.clear();
+				continue;
+			}
+			for (auto &val : local_cd.values) {
+				global_cd.values.insert(val);
+				if (global_cd.values.size() > threshold) {
+					global_cd.over_threshold = true;
+					global_cd.values.clear();
+					break;
 				}
 			}
 		}
@@ -319,6 +381,7 @@ static void PushDynamicFilters(const PhysicalCreateBF &op, const CreateBFGlobalS
 
 	bool push_bf = (filter_type == "all" || filter_type == "bf_only");
 	bool push_minmax = (filter_type == "all" || filter_type == "minmax_only");
+	bool consider_in = (filter_type == "all");
 
 	for (auto &target : op.pushdown_targets) {
 		for (size_t i = 0; i < op.bf_operation->build_columns.size(); i++) {
@@ -333,7 +396,31 @@ static void PushDynamicFilters(const PhysicalCreateBF &op, const CreateBFGlobalS
 
 			const auto &build_col = op.bf_operation->build_columns[i];
 
-			if (push_bf) {
+			// push IN-filter (zonemap-only) or equality constant alongside BF; equality
+			// is per-row and supersedes BF/min-max
+			bool pushed_equal = false;
+			if (consider_in && i < gsink.column_distinct.size()) {
+				auto &cd = gsink.column_distinct[i];
+				if (!cd.over_threshold && cd.values.size() == 1) {
+					auto eq = make_uniq<ConstantFilter>(ExpressionType::COMPARE_EQUAL, *cd.values.begin());
+					target.dynamic_filters->PushFilter(op, target.scan_column_index, std::move(eq));
+					pushed_equal = true;
+					D_PRINTF("[PUSHDOWN] pushed equality constant for col %s", target.column_name.c_str());
+				} else if (!cd.over_threshold && cd.values.size() > 1) {
+					vector<Value> in_list(cd.values.begin(), cd.values.end());
+					if (!FilterCombiner::ContainsNull(in_list) && !FilterCombiner::IsDenseRange(in_list)) {
+						auto in_f = make_uniq<InFilter>(std::move(in_list));
+						auto opt = make_uniq<OptionalFilter>(std::move(in_f));
+						target.dynamic_filters->PushFilter(op, target.scan_column_index, std::move(opt));
+						D_PRINTF("[PUSHDOWN] pushed IN-filter (%llu values) for col %s",
+						         (unsigned long long)cd.values.size(), target.column_name.c_str());
+					}
+				}
+			}
+
+			// keep BF alongside IN-filter for per-row pruning (IN is zonemap-only);
+			// equality filter already does per-row, skip BF there
+			if (push_bf && !pushed_equal) {
 				auto bf_it = op.bloom_filter_map.find(build_col);
 				if (bf_it != op.bloom_filter_map.end() && bf_it->second && !bf_it->second->IsEmpty()) {
 					auto bf_filter = make_uniq<BFTableFilter>(bf_it->second->GetNativeFilter(), false,
@@ -347,7 +434,9 @@ static void PushDynamicFilters(const PhysicalCreateBF &op, const CreateBFGlobalS
 				}
 			}
 
-			if (push_minmax && i < gsink.column_min_max.size() && gsink.column_min_max[i].has_value) {
+			// equality filter already expresses min/max; skip min/max push in that case
+			if (push_minmax && !pushed_equal && i < gsink.column_min_max.size() &&
+			    gsink.column_min_max[i].has_value) {
 				auto &mm = gsink.column_min_max[i];
 				auto min_filter = make_uniq<ConstantFilter>(ExpressionType::COMPARE_GREATERTHANOREQUALTO, mm.min_val);
 				target.dynamic_filters->PushFilter(op, target.scan_column_index, std::move(min_filter));
