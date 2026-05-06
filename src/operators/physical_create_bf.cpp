@@ -3,7 +3,7 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/parallel/pipeline.hpp"
 #include "debug_utils.hpp"
-#include "rpt_profiling.hpp"
+#include "robust_profiling.hpp"
 #include "probe_empty_registry.hpp"
 #include <duckdb/parallel/meta_pipeline.hpp>
 #include "duckdb/planner/filter/bloom_filter.hpp"
@@ -198,7 +198,7 @@ CreateBFGlobalSinkState::CreateBFGlobalSinkState(ClientContext &context, const P
 			probe_empty_flag = reg->GetOrCreate(op.bf_operation->probe_table_idx);
 		}
 		Value v;
-		if (context.TryGetCurrentSetting("rpt_dynamic_or_filter_threshold", v)) {
+		if (context.TryGetCurrentSetting("robust_dynamic_or_filter_threshold", v)) {
 			distinct_threshold = v.GetValue<uint64_t>();
 		}
 		column_distinct.resize(op.bound_column_indices.size());
@@ -218,7 +218,7 @@ CreateBFLocalSinkState::CreateBFLocalSinkState(ClientContext &context, const Phy
 SinkResultType PhysicalCreateBF::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
 	if (!profiling_checked) {
 		profiling_checked = true;
-		auto prof = GetRPTProfilingState(context.client);
+		auto prof = GetRobustProfilingState(context.client);
 		if (prof) {
 			profiling_stats = prof->RegisterCreateBF(bf_operation->build_table_idx, bf_operation->probe_columns,
 			                                         bf_operation->sequence_number, is_forward_pass);
@@ -375,7 +375,7 @@ static void PushDynamicFilters(const PhysicalCreateBF &op, const CreateBFGlobalS
 
 	string filter_type = "all";
 	Value filter_type_val;
-	if (context.TryGetCurrentSetting("rpt_filter_type", filter_type_val)) {
+	if (context.TryGetCurrentSetting("robust_filter_type", filter_type_val)) {
 		filter_type = filter_type_val.GetValue<string>();
 	}
 
@@ -458,7 +458,7 @@ SinkFinalizeType PhysicalCreateBF::Finalize(Pipeline &pipeline, Event &event, Cl
 	// lazy init profiling if Sink was never called (e.g., empty input)
 	if (!profiling_checked) {
 		profiling_checked = true;
-		auto prof = GetRPTProfilingState(context);
+		auto prof = GetRobustProfilingState(context);
 		if (prof) {
 			profiling_stats = prof->RegisterCreateBF(bf_operation->build_table_idx, bf_operation->probe_columns,
 			                                         bf_operation->sequence_number, is_forward_pass);

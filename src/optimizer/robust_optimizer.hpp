@@ -10,7 +10,7 @@
 
 namespace duckdb {
 
-// tree node for rooted MST representation (used by RPT DAG)
+// tree node for rooted MST representation (used by Robust DAG)
 struct TreeNode {
 	idx_t table_idx;
 	LogicalOperator *table_op;
@@ -48,9 +48,9 @@ struct PhysicalDAGNode {
 // column key for equivalence class union-find
 using ColKey = std::pair<idx_t, idx_t>; // (table_idx, column_idx)
 
-class RPTOptimizerContextState : public ClientContextState {
+class RobustOptimizerContextState : public ClientContextState {
 public:
-	explicit RPTOptimizerContextState(ClientContext &ctx) : context(ctx) {
+	explicit RobustOptimizerContextState(ClientContext &ctx) : context(ctx) {
 	}
 
 	ClientContext &context;
@@ -125,10 +125,10 @@ public:
 	void DebugPrintGraph(const vector<JoinEdge> &edges) const;
 	void DebugPrintMST(const vector<JoinEdge> &mst_edges, const vector<BloomFilterOperation> &bf_operations);
 
-	// print DAG as ASCII tree (gated by rpt_display_dag setting)
+	// print DAG as ASCII tree (gated by robust_display_dag setting)
 	void PrintDAG(TreeNode *root);
 
-	// build and print DAG from DuckDB's join order (gated by rpt_display_physical_dag)
+	// build and print DAG from DuckDB's join order (gated by robust_display_physical_dag)
 	vector<PhysicalDAGNode *> BuildPhysicalPlanDAG(LogicalOperator *op, map<ColKey, ColKey> &uf_parent);
 	void PrintPhysicalPlanDAG(LogicalOperator *op);
 

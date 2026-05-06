@@ -1,4 +1,4 @@
-#include "rpt_optimizer.hpp"
+#include "robust_optimizer.hpp"
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
@@ -14,7 +14,7 @@
 #include "../operators/logical_create_bf.hpp"
 #include "../operators/logical_use_bf.hpp"
 #include "debug_utils.hpp"
-#include "rpt_profiling.hpp"
+#include "robust_profiling.hpp"
 #include "../utils/dag_printer.hpp"
 #include <chrono>
 
@@ -22,7 +22,7 @@ namespace duckdb {
 // class LogicalCreateBF;
 // class LogicalUseBF;
 
-vector<JoinEdge> RPTOptimizerContextState::ExtractOperators(LogicalOperator &plan) {
+vector<JoinEdge> RobustOptimizerContextState::ExtractOperators(LogicalOperator &plan) {
 	vector<LogicalOperator *> join_ops;
 	vector<TableInfo> table_infos;
 
@@ -42,7 +42,7 @@ vector<JoinEdge> RPTOptimizerContextState::ExtractOperators(LogicalOperator &pla
 	return CreateJoinEdges(join_ops);
 }
 
-void RPTOptimizerContextState::ExtractOperatorsRecursive(LogicalOperator &plan, vector<LogicalOperator *> &join_ops) {
+void RobustOptimizerContextState::ExtractOperatorsRecursive(LogicalOperator &plan, vector<LogicalOperator *> &join_ops) {
 	LogicalOperator *op = &plan;
 
 	// step 1: collect all join operators
@@ -138,7 +138,7 @@ void RPTOptimizerContextState::ExtractOperatorsRecursive(LogicalOperator &plan, 
 	}
 }
 
-ColumnBinding RPTOptimizerContextState::ResolveColumnBinding(const ColumnBinding &binding) const {
+ColumnBinding RobustOptimizerContextState::ResolveColumnBinding(const ColumnBinding &binding) const {
 	ColumnBinding current = binding;
 	set<pair<idx_t, idx_t>> visited;
 
@@ -165,7 +165,7 @@ ColumnBinding RPTOptimizerContextState::ResolveColumnBinding(const ColumnBinding
 	return current;
 }
 
-vector<JoinEdge> RPTOptimizerContextState::CreateJoinEdges(vector<LogicalOperator *> &join_ops) {
+vector<JoinEdge> RobustOptimizerContextState::CreateJoinEdges(vector<LogicalOperator *> &join_ops) {
 	vector<JoinEdge> edges;
 	for (auto &op : join_ops) {
 		auto &join = op->Cast<LogicalComparisonJoin>();
@@ -212,7 +212,7 @@ vector<JoinEdge> RPTOptimizerContextState::CreateJoinEdges(vector<LogicalOperato
 	return edges;
 }
 
-vector<JoinEdge> RPTOptimizerContextState::LargestRoot(vector<JoinEdge> &edges) {
+vector<JoinEdge> RobustOptimizerContextState::LargestRoot(vector<JoinEdge> &edges) {
 	// step 1: find largest table by cardinality
 	idx_t largest_table_idx = 0;
 	idx_t max_cardinality = 0;
@@ -275,7 +275,7 @@ vector<JoinEdge> RPTOptimizerContextState::LargestRoot(vector<JoinEdge> &edges) 
 	return mst_edges;
 }
 
-TreeNode *RPTOptimizerContextState::BuildRootedTree(vector<JoinEdge> &mst_edges) const {
+TreeNode *RobustOptimizerContextState::BuildRootedTree(vector<JoinEdge> &mst_edges) const {
 	if (mst_edges.empty()) {
 		return nullptr;
 	}
@@ -375,7 +375,7 @@ TreeNode *RPTOptimizerContextState::BuildRootedTree(vector<JoinEdge> &mst_edges)
 	return table_to_node[root_table_idx];
 }
 
-void RPTOptimizerContextState::DebugPrintGraph(const vector<JoinEdge> &edges) const {
+void RobustOptimizerContextState::DebugPrintGraph(const vector<JoinEdge> &edges) const {
 	(void)edges;
 #ifdef DEBUG
 	// Debug: Print all tables
@@ -421,7 +421,7 @@ void RPTOptimizerContextState::DebugPrintGraph(const vector<JoinEdge> &edges) co
 #endif
 }
 
-void RPTOptimizerContextState::DebugPrintMST(const vector<JoinEdge> &mst_edges,
+void RobustOptimizerContextState::DebugPrintMST(const vector<JoinEdge> &mst_edges,
                                              const vector<BloomFilterOperation> &bf_operations) {
 	(void)mst_edges;
 	(void)bf_operations;
@@ -467,9 +467,9 @@ void RPTOptimizerContextState::DebugPrintMST(const vector<JoinEdge> &mst_edges,
 #endif
 }
 
-void RPTOptimizerContextState::PrintDAG(TreeNode *root) {
+void RobustOptimizerContextState::PrintDAG(TreeNode *root) {
 	Value val;
-	if (!context.TryGetCurrentSetting("rpt_display_dag", val) || !val.GetValue<bool>()) {
+	if (!context.TryGetCurrentSetting("robust_display_dag", val) || !val.GetValue<bool>()) {
 		return;
 	}
 	PrintTransferDAG(root, table_mgr);
@@ -513,7 +513,7 @@ static void UFUnion(map<ColKey, ColKey> &parent, ColKey a, ColKey b) {
 // recursive DFS for building physical DAG
 // uses build-first traversal so DFS index matches execution order
 // (first-executed = lowest index, last-executed = highest index)
-static void PhysicalDAGDFS(LogicalOperator *op, TableManager &table_mgr, RPTOptimizerContextState &state,
+static void PhysicalDAGDFS(LogicalOperator *op, TableManager &table_mgr, RobustOptimizerContextState &state,
                            vector<PhysicalDAGNode *> &all_nodes, map<idx_t, PhysicalDAGNode *> &node_map,
                            map<idx_t, int> &dfs_index, map<ColKey, ColKey> &uf_parent) {
 	if (!op) {
@@ -671,7 +671,7 @@ static void PhysicalDAGDFS(LogicalOperator *op, TableManager &table_mgr, RPTOpti
 	}
 }
 
-vector<PhysicalDAGNode *> RPTOptimizerContextState::BuildPhysicalPlanDAG(LogicalOperator *op,
+vector<PhysicalDAGNode *> RobustOptimizerContextState::BuildPhysicalPlanDAG(LogicalOperator *op,
                                                                         map<ColKey, ColKey> &uf_parent) {
 	vector<PhysicalDAGNode *> all_nodes;
 	map<idx_t, PhysicalDAGNode *> node_map;
@@ -712,7 +712,7 @@ vector<PhysicalDAGNode *> RPTOptimizerContextState::BuildPhysicalPlanDAG(Logical
 	return all_nodes;
 }
 
-void RPTOptimizerContextState::FlipRootsToLeaves(vector<PhysicalDAGNode *> &all_nodes) {
+void RobustOptimizerContextState::FlipRootsToLeaves(vector<PhysicalDAGNode *> &all_nodes) {
 	// step 1: find all roots
 	vector<PhysicalDAGNode *> roots;
 	for (auto *node : all_nodes) {
@@ -809,9 +809,9 @@ void RPTOptimizerContextState::FlipRootsToLeaves(vector<PhysicalDAGNode *> &all_
 	}
 }
 
-void RPTOptimizerContextState::PrintPhysicalPlanDAG(LogicalOperator *op) {
+void RobustOptimizerContextState::PrintPhysicalPlanDAG(LogicalOperator *op) {
 	Value val;
-	if (!context.TryGetCurrentSetting("rpt_display_physical_dag", val) || !val.GetValue<bool>()) {
+	if (!context.TryGetCurrentSetting("robust_display_physical_dag", val) || !val.GetValue<bool>()) {
 		return;
 	}
 
@@ -825,7 +825,7 @@ void RPTOptimizerContextState::PrintPhysicalPlanDAG(LogicalOperator *op) {
 
 std::pair<unordered_map<LogicalOperator *, vector<BloomFilterOperation>>,
           unordered_map<LogicalOperator *, vector<BloomFilterOperation>>>
-RPTOptimizerContextState::GenerateStageModifications(const vector<JoinEdge> &mst_edges) {
+RobustOptimizerContextState::GenerateStageModifications(const vector<JoinEdge> &mst_edges) {
 	// step 1: build rooted tree from MST
 	TreeNode *root = BuildRootedTree(const_cast<vector<JoinEdge> &>(mst_edges));
 
@@ -996,7 +996,7 @@ RPTOptimizerContextState::GenerateStageModifications(const vector<JoinEdge> &mst
 
 std::pair<unordered_map<LogicalOperator *, vector<BloomFilterOperation>>,
           unordered_map<LogicalOperator *, vector<BloomFilterOperation>>>
-RPTOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDAGNode *> &all_nodes,
+RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDAGNode *> &all_nodes,
                                                             map<ColKey, ColKey> &uf_parent) {
 	unordered_map<LogicalOperator *, vector<BloomFilterOperation>> forward_bf_ops;
 	unordered_map<LogicalOperator *, vector<BloomFilterOperation>> backward_bf_ops;
@@ -1162,7 +1162,7 @@ RPTOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDAGNo
 }
 
 unique_ptr<LogicalOperator>
-RPTOptimizerContextState::BuildStackedBFOperators(unique_ptr<LogicalOperator> base_plan,
+RobustOptimizerContextState::BuildStackedBFOperators(unique_ptr<LogicalOperator> base_plan,
                                                   const vector<BloomFilterOperation> &bf_ops, bool reverse_order) {
 	if (bf_ops.empty()) {
 		return base_plan;
@@ -1264,7 +1264,7 @@ RPTOptimizerContextState::BuildStackedBFOperators(unique_ptr<LogicalOperator> ba
 	return current;
 }
 
-unique_ptr<LogicalOperator> RPTOptimizerContextState::ApplyStageModifications(
+unique_ptr<LogicalOperator> RobustOptimizerContextState::ApplyStageModifications(
     unique_ptr<LogicalOperator> plan,
     const unordered_map<LogicalOperator *, vector<BloomFilterOperation>> &forward_bf_ops,
     const unordered_map<LogicalOperator *, vector<BloomFilterOperation>> &backward_bf_ops) {
@@ -1293,7 +1293,7 @@ unique_ptr<LogicalOperator> RPTOptimizerContextState::ApplyStageModifications(
 	return plan;
 }
 
-void RPTOptimizerContextState::LinkUseBFToCreateBF(LogicalOperator *plan) {
+void RobustOptimizerContextState::LinkUseBFToCreateBF(LogicalOperator *plan) {
 	if (!plan) {
 		return;
 	}
@@ -1398,7 +1398,7 @@ void RPTOptimizerContextState::LinkUseBFToCreateBF(LogicalOperator *plan) {
 	}
 }
 
-void RPTOptimizerContextState::SetupDynamicFilterPushdown(LogicalOperator *plan) {
+void RobustOptimizerContextState::SetupDynamicFilterPushdown(LogicalOperator *plan) {
 	if (!plan) {
 		return;
 	}
@@ -1515,7 +1515,7 @@ static LogicalOperator *FindDeepestCreateBF(LogicalOperator *node) {
 	return deepest;
 }
 
-void RPTOptimizerContextState::LiftCreateBFAboveMarkJoin(unique_ptr<LogicalOperator> &plan) {
+void RobustOptimizerContextState::LiftCreateBFAboveMarkJoin(unique_ptr<LogicalOperator> &plan) {
 	if (!plan) {
 		return;
 	}
@@ -1548,7 +1548,7 @@ void RPTOptimizerContextState::LiftCreateBFAboveMarkJoin(unique_ptr<LogicalOpera
 	plan = std::move(block);
 }
 
-void RPTOptimizerContextState::LiftCreateBFAboveFilter(unique_ptr<LogicalOperator> &plan) {
+void RobustOptimizerContextState::LiftCreateBFAboveFilter(unique_ptr<LogicalOperator> &plan) {
 	if (!plan) {
 		return;
 	}
@@ -1575,7 +1575,7 @@ void RPTOptimizerContextState::LiftCreateBFAboveFilter(unique_ptr<LogicalOperato
 	plan = std::move(block);
 }
 
-unique_ptr<LogicalOperator> RPTOptimizerContextState::PreOptimize(unique_ptr<LogicalOperator> plan) {
+unique_ptr<LogicalOperator> RobustOptimizerContextState::PreOptimize(unique_ptr<LogicalOperator> plan) {
 	// step 1: extract join operators
 	vector<JoinEdge> edges = ExtractOperators(*plan);
 
@@ -1585,7 +1585,7 @@ unique_ptr<LogicalOperator> RPTOptimizerContextState::PreOptimize(unique_ptr<Log
 	return plan;
 }
 
-unique_ptr<LogicalOperator> RPTOptimizerContextState::Optimize(unique_ptr<LogicalOperator> plan) {
+unique_ptr<LogicalOperator> RobustOptimizerContextState::Optimize(unique_ptr<LogicalOperator> plan) {
 	// step 1: extract join operators
 	vector<JoinEdge> edges = ExtractOperators(*plan);
 
@@ -1600,7 +1600,7 @@ unique_ptr<LogicalOperator> RPTOptimizerContextState::Optimize(unique_ptr<Logica
 	// determine heuristic
 	Value heuristic_val;
 	string heuristic = "largest_root";
-	if (context.TryGetCurrentSetting("rpt_heuristic", heuristic_val)) {
+	if (context.TryGetCurrentSetting("robust_heuristic", heuristic_val)) {
 		heuristic = heuristic_val.GetValue<string>();
 	}
 
@@ -1614,7 +1614,7 @@ unique_ptr<LogicalOperator> RPTOptimizerContextState::Optimize(unique_ptr<Logica
 		// flip non-largest roots to leaves (default: on)
 		Value flip_val;
 		bool flip_roots = true;
-		if (context.TryGetCurrentSetting("rpt_flip_roots", flip_val)) {
+		if (context.TryGetCurrentSetting("robust_flip_roots", flip_val)) {
 			flip_roots = flip_val.GetValue<bool>();
 		}
 		if (flip_roots) {
@@ -1623,7 +1623,7 @@ unique_ptr<LogicalOperator> RPTOptimizerContextState::Optimize(unique_ptr<Logica
 
 		// display DAG if setting is enabled
 		Value dag_val;
-		if (context.TryGetCurrentSetting("rpt_display_dag", dag_val) && dag_val.GetValue<bool>()) {
+		if (context.TryGetCurrentSetting("robust_display_dag", dag_val) && dag_val.GetValue<bool>()) {
 			PrintPhysicalDAG(all_nodes, table_mgr);
 		}
 
@@ -1641,7 +1641,7 @@ unique_ptr<LogicalOperator> RPTOptimizerContextState::Optimize(unique_ptr<Logica
 	// check pass mode setting
 	Value pass_mode_val;
 	string pass_mode = "both";
-	if (context.TryGetCurrentSetting("rpt_pass_mode", pass_mode_val)) {
+	if (context.TryGetCurrentSetting("robust_pass_mode", pass_mode_val)) {
 		pass_mode = pass_mode_val.GetValue<string>();
 	}
 	if (pass_mode == "forward_only") {
@@ -1687,24 +1687,24 @@ unique_ptr<LogicalOperator> RPTOptimizerContextState::Optimize(unique_ptr<Logica
 // void PredicateTransferOptimizer::PreOptimize(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
 // 	// create optimizer state using proper DuckDB state management
 // 	auto optimizer_state = input.context.registered_state->GetOrCreate<PredicateTransferOptimizer>(
-// 		"rpt_optimizer_state", input.context);
+// 		"robust_optimizer_state", input.context);
 //
 // 	plan = optimizer_state->PreOptimize(std::move(plan));
 // }
 
-void RPTOptimizerContextState::PreOptimize(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
+void RobustOptimizerContextState::PreOptimize(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
 	auto optimizer_state =
-	    input.context.registered_state->GetOrCreate<RPTOptimizerContextState>("rpt_optimizer_state", input.context);
+	    input.context.registered_state->GetOrCreate<RobustOptimizerContextState>("robust_optimizer_state", input.context);
 
 	plan = optimizer_state->PreOptimize(std::move(plan));
 }
 
-void RPTOptimizerContextState::Optimize(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
-	auto profiling = GetRPTProfilingState(input.context);
+void RobustOptimizerContextState::Optimize(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
+	auto profiling = GetRobustProfilingState(input.context);
 	auto opt_start = std::chrono::high_resolution_clock::now();
 
 	const auto optimizer_state =
-	    input.context.registered_state->GetOrCreate<RPTOptimizerContextState>("rpt_optimizer_state", input.context);
+	    input.context.registered_state->GetOrCreate<RobustOptimizerContextState>("robust_optimizer_state", input.context);
 	plan = optimizer_state->Optimize(std::move(plan));
 
 	if (profiling) {
@@ -1718,7 +1718,7 @@ void RPTOptimizerContextState::Optimize(OptimizerExtensionInput &input, unique_p
 		}
 	}
 
-	input.context.registered_state->Remove("rpt_optimizer_state");
+	input.context.registered_state->Remove("robust_optimizer_state");
 }
 
 } // namespace duckdb

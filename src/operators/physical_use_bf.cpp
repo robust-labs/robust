@@ -5,7 +5,7 @@
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/parallel/meta_pipeline.hpp"
 #include "debug_utils.hpp"
-#include "rpt_profiling.hpp"
+#include "robust_profiling.hpp"
 #include "probe_empty_registry.hpp"
 
 namespace duckdb {
@@ -68,7 +68,7 @@ OperatorResultType PhysicalUseBF::ExecuteInternal(ExecutionContext &context, Dat
 
 	if (!profiling_checked) {
 		profiling_checked = true;
-		auto prof = GetRPTProfilingState(context.client);
+		auto prof = GetRobustProfilingState(context.client);
 		if (prof) {
 			profiling_stats = prof->RegisterUseBF(bf_operation->build_table_idx, bf_operation->probe_table_idx,
 			                                      bf_operation->sequence_number, bf_operation->is_forward_pass);

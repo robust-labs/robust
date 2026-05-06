@@ -1,6 +1,6 @@
 #define DUCKDB_EXTENSION_MAIN
 
-#include "rpt_extension.hpp"
+#include "robust_extension.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/function/scalar_function.hpp"
@@ -9,7 +9,7 @@
 #include "duckdb/planner/operator_extension.hpp"
 #include "operators/logical_create_bf.hpp"
 #include "operators/logical_use_bf.hpp"
-#include "optimizer/rpt_optimizer.hpp"
+#include "optimizer/robust_optimizer.hpp"
 #include "duckdb/main/config.hpp"
 
 // OpenSSL linked through vcpkg
@@ -42,8 +42,8 @@ public:
 static void LoadInternal(ExtensionLoader &loader) {
 	// Register the SIP optimizer rule
 	OptimizerExtension optimizer;
-	// optimizer.pre_optimize_function = RPTOptimizerContextState::PreOptimize;
-	optimizer.optimize_function = RPTOptimizerContextState::Optimize;
+	// optimizer.pre_optimize_function = RobustOptimizerContextState::PreOptimize;
+	optimizer.optimize_function = RobustOptimizerContextState::Optimize;
 
 	DatabaseInstance &instance = loader.GetDatabaseInstance();
 	OptimizerExtension::Register(instance.config, optimizer);
@@ -54,35 +54,35 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// Register profiling setting
 	auto &config = DBConfig::GetConfig(instance);
-	config.AddExtensionOption("rpt_profiling", "Enable RPT extension profiling output", LogicalType::BOOLEAN,
+	config.AddExtensionOption("robust_profiling", "Enable Robust extension profiling output", LogicalType::BOOLEAN,
 	                          Value::BOOLEAN(false));
-	config.AddExtensionOption("rpt_display_dag", "Display RPT transfer DAG", LogicalType::BOOLEAN,
+	config.AddExtensionOption("robust_display_dag", "Display Robust transfer DAG", LogicalType::BOOLEAN,
 	                          Value::BOOLEAN(false));
-	config.AddExtensionOption("rpt_display_physical_dag", "Display DAG from DuckDB join order", LogicalType::BOOLEAN,
+	config.AddExtensionOption("robust_display_physical_dag", "Display DAG from DuckDB join order", LogicalType::BOOLEAN,
 	                          Value::BOOLEAN(false));
-	config.AddExtensionOption("rpt_filter_type", "Filter type for scan pushdown: all, bf_only, minmax_only",
+	config.AddExtensionOption("robust_filter_type", "Filter type for scan pushdown: all, bf_only, minmax_only",
 	                          LogicalType::VARCHAR, Value("all"));
-	config.AddExtensionOption("rpt_pass_mode", "Pass mode: both, forward_only", LogicalType::VARCHAR, Value("both"));
-	config.AddExtensionOption("rpt_heuristic", "Heuristic for BF transfer: largest_root, join_order",
+	config.AddExtensionOption("robust_pass_mode", "Pass mode: both, forward_only", LogicalType::VARCHAR, Value("both"));
+	config.AddExtensionOption("robust_heuristic", "Heuristic for BF transfer: largest_root, join_order",
 	                          LogicalType::VARCHAR, Value("largest_root"));
-	config.AddExtensionOption("rpt_flip_roots", "Flip non-largest roots to leaves in join_order DAG",
+	config.AddExtensionOption("robust_flip_roots", "Flip non-largest roots to leaves in join_order DAG",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
-	config.AddExtensionOption("rpt_dynamic_or_filter_threshold",
+	config.AddExtensionOption("robust_dynamic_or_filter_threshold",
 	                          "Max distinct build keys to push as IN-filter instead of bloom filter",
 	                          LogicalType::UBIGINT, Value::UBIGINT(50));
 }
 
-void RptExtension::Load(ExtensionLoader &loader) {
+void RobustExtension::Load(ExtensionLoader &loader) {
 	LoadInternal(loader);
 }
 
-std::string RptExtension::Name() {
-	return "rpt";
+std::string RobustExtension::Name() {
+	return "robust";
 }
 
-std::string RptExtension::Version() const {
-#ifdef EXT_VERSION_RPT
-	return EXT_VERSION_RPT;
+std::string RobustExtension::Version() const {
+#ifdef EXT_VERSION_ROBUST
+	return EXT_VERSION_ROBUST;
 #else
 	return "";
 #endif
@@ -92,11 +92,11 @@ std::string RptExtension::Version() const {
 
 extern "C" {
 
-DUCKDB_CPP_EXTENSION_ENTRY(rpt, loader) {
+DUCKDB_CPP_EXTENSION_ENTRY(robust, loader) {
 	duckdb::LoadInternal(loader);
 }
 
-DUCKDB_EXTENSION_API const char *rpt_version() {
+DUCKDB_EXTENSION_API const char *robust_version() {
 	return duckdb::DuckDB::LibraryVersion();
 }
 }

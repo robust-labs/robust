@@ -1,7 +1,7 @@
 # This file is included by DuckDB's build system. It specifies which extension to load
 
 # Extension from this repo - build as dynamic extension 
-duckdb_extension_load(rpt
+duckdb_extension_load(robust
     SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}
     LOAD_TESTS
     DONT_LINK

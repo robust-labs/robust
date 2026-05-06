@@ -1,5 +1,5 @@
 #include "dag_printer.hpp"
-#include "../optimizer/rpt_optimizer.hpp"
+#include "../optimizer/robust_optimizer.hpp"
 #include "duckdb/common/string_util.hpp"
 
 namespace duckdb {

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
 
 # Set extension name here
-set(TARGET_NAME rpt)
+set(TARGET_NAME robust)
 
 # DuckDB's extension distribution supports vcpkg. As such, dependencies can be added in ./vcpkg.json and then
 # used in cmake with find_package. Feel free to remove or replace with other dependencies.
@@ -17,13 +17,13 @@ include_directories(src/include)
 #include_directories(src)
 
 set(EXTENSION_SOURCES
-    src/rpt_extension.cpp
+    src/robust_extension.cpp
     src/bloom_filter.cpp
     src/operators/logical_create_bf.cpp
     src/operators/physical_create_bf.cpp
     src/operators/logical_use_bf.cpp
     src/operators/physical_use_bf.cpp
-    src/optimizer/rpt_optimizer.cpp
+    src/optimizer/robust_optimizer.cpp
     src/optimizer/table_manager.cpp
     src/utils/dag_printer.cpp
 )

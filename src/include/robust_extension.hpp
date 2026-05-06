@@ -4,7 +4,7 @@
 
 namespace duckdb {
 
-class RptExtension : public Extension {
+class RobustExtension : public Extension {
 public:
 	void Load(ExtensionLoader &loader) override;
 	std::string Name() override;

@@ -49,9 +49,9 @@ struct ScopedTimer {
 	}
 };
 
-class RPTProfilingState : public ClientContextState {
+class RobustProfilingState : public ClientContextState {
 public:
-	explicit RPTProfilingState(bool enabled) : enabled(enabled) {
+	explicit RobustProfilingState(bool enabled) : enabled(enabled) {
 	}
 
 	bool enabled;
@@ -116,11 +116,11 @@ public:
 			return;
 		}
 		PrintSummary();
-		context.registered_state->Remove("rpt_profiling");
+		context.registered_state->Remove("robust_profiling");
 	}
 
 	void PrintSummary() {
-		Printer::Print("\n=== RPT PROFILING ===");
+		Printer::Print("\n=== Robust PROFILING ===");
 		Printer::PrintF("Optimizer: %lld us", (long long)optimizer_time_us);
 
 		// build a combined list sorted by sequence_number
@@ -212,15 +212,15 @@ public:
 			                (long long)(fwd_probe_us + bwd_probe_us), (long long)(total_rows_in - total_rows_out),
 			                (long long)total_rows_in, filtered_pct);
 		}
-		Printer::Print("=== END RPT PROFILING ===\n");
+		Printer::Print("=== END Robust PROFILING ===\n");
 	}
 };
 
-inline shared_ptr<RPTProfilingState> GetRPTProfilingState(ClientContext &context) {
+inline shared_ptr<RobustProfilingState> GetRobustProfilingState(ClientContext &context) {
 	Value val;
-	auto result = context.TryGetCurrentSetting("rpt_profiling", val);
+	auto result = context.TryGetCurrentSetting("robust_profiling", val);
 	if (result && val.GetValue<bool>()) {
-		return context.registered_state->GetOrCreate<RPTProfilingState>("rpt_profiling", true);
+		return context.registered_state->GetOrCreate<RobustProfilingState>("robust_profiling", true);
 	}
 	return nullptr;
 }
