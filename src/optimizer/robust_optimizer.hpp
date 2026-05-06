@@ -89,41 +89,41 @@ public:
 	// &larger_columns, 														unordered_map<LogicalOperator*,
 	// unique_ptr<LogicalOperator>> &backward_pass);
 	//
-	std::pair<unordered_map<LogicalOperator *, vector<BloomFilterOperation>>,
-	          unordered_map<LogicalOperator *, vector<BloomFilterOperation>>>
+	std::pair<unordered_map<LogicalOperator *, vector<FilterOperation>>,
+	          unordered_map<LogicalOperator *, vector<FilterOperation>>>
 	GenerateStageModifications(const vector<JoinEdge> &mst_edges);
 
-	std::pair<unordered_map<LogicalOperator *, vector<BloomFilterOperation>>,
-	          unordered_map<LogicalOperator *, vector<BloomFilterOperation>>>
+	std::pair<unordered_map<LogicalOperator *, vector<FilterOperation>>,
+	          unordered_map<LogicalOperator *, vector<FilterOperation>>>
 	GenerateStageModificationsFromDAG(vector<PhysicalDAGNode *> &all_nodes, map<ColKey, ColKey> &uf_parent);
 
 	unique_ptr<LogicalOperator> BuildStackedBFOperators(unique_ptr<LogicalOperator> base_plan,
-	                                                    const vector<BloomFilterOperation> &bf_ops,
+	                                                    const vector<FilterOperation> &filter_ops,
 	                                                    bool reverse_order = false);
 
 	unique_ptr<LogicalOperator>
 	ApplyStageModifications(unique_ptr<LogicalOperator> plan,
-	                        const unordered_map<LogicalOperator *, vector<BloomFilterOperation>> &forward_bf_ops,
-	                        const unordered_map<LogicalOperator *, vector<BloomFilterOperation>> &backward_bf_ops);
+	                        const unordered_map<LogicalOperator *, vector<FilterOperation>> &forward_filter_ops,
+	                        const unordered_map<LogicalOperator *, vector<FilterOperation>> &backward_filter_ops);
 
-	// helper to link USE_BF operators to their corresponding CREATE_BF operators
-	void LinkUseBFToCreateBF(LogicalOperator *plan);
+	// helper to link PROBE_FILTER operators to their corresponding CREATE_FILTER operators
+	void LinkProbeFilterToCreateFilter(LogicalOperator *plan);
 
-	// set up dynamic filter pushdown for forward-pass CREATE_BF operators
+	// set up dynamic filter pushdown for forward-pass CREATE_FILTER operators
 	void SetupDynamicFilterPushdown(LogicalOperator *plan);
 
 	// pass 1: lift BF operator block above MARK_JOIN (probe chain → above MARK_JOIN)
-	void LiftCreateBFAboveMarkJoin(unique_ptr<LogicalOperator> &plan);
+	void LiftCreateFilterAboveMarkJoin(unique_ptr<LogicalOperator> &plan);
 
 	// pass 2: lift BF operator block above FILTER (handles all FILTER cases)
-	void LiftCreateBFAboveFilter(unique_ptr<LogicalOperator> &plan);
+	void LiftCreateFilterAboveFilter(unique_ptr<LogicalOperator> &plan);
 
 	// resolve column binding through rename chain to get base table binding
 	ColumnBinding ResolveColumnBinding(const ColumnBinding &binding) const;
 
 	// debug functions
 	void DebugPrintGraph(const vector<JoinEdge> &edges) const;
-	void DebugPrintMST(const vector<JoinEdge> &mst_edges, const vector<BloomFilterOperation> &bf_operations);
+	void DebugPrintMST(const vector<JoinEdge> &mst_edges, const vector<FilterOperation> &filter_operations);
 
 	// print DAG as ASCII tree (gated by robust_display_dag setting)
 	void PrintDAG(TreeNode *root);

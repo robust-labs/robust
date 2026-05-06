@@ -1,5 +1,5 @@
-#include "physical_use_bf.hpp"
-#include "physical_create_bf.hpp"
+#include "physical_probe_filter.hpp"
+#include "physical_create_filter.hpp"
 #include "bloom_filter.hpp"
 #include "duckdb/common/types/selection_vector.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
@@ -10,40 +10,40 @@
 
 namespace duckdb {
 
-PhysicalUseBF::PhysicalUseBF(PhysicalPlan &physical_plan, shared_ptr<BloomFilterOperation> bf_operation,
+PhysicalProbeFilter::PhysicalProbeFilter(PhysicalPlan &physical_plan, shared_ptr<FilterOperation> filter_operation,
                              vector<LogicalType> types, idx_t estimated_cardinality, vector<idx_t> bound_column_indices)
     : CachingPhysicalOperator(physical_plan, PhysicalOperatorType::EXTENSION, std::move(types), estimated_cardinality),
-      bf_operation(std::move(bf_operation)), bound_column_indices(std::move(bound_column_indices)) {
+      filter_operation(std::move(filter_operation)), bound_column_indices(std::move(bound_column_indices)) {
 }
 
-string PhysicalUseBF::GetName() const {
-	return "USE_BF";
+string PhysicalProbeFilter::GetName() const {
+	return "PROBE_FILTER";
 }
 
-string PhysicalUseBF::ToString(ExplainFormat format) const {
-	string result = "USE_BF";
+string PhysicalProbeFilter::ToString(ExplainFormat format) const {
+	string result = "PROBE_FILTER";
 	if (is_passthrough) {
 		result += " (passthrough, pushed to scan)";
-	} else if (bf_operation) {
-		result += " [" + std::to_string(bf_operation->probe_columns.size()) + " probe columns]";
+	} else if (filter_operation) {
+		result += " [" + std::to_string(filter_operation->probe_columns.size()) + " probe columns]";
 	}
 	return result;
 }
 
-InsertionOrderPreservingMap<string> PhysicalUseBF::ParamsToString() const {
+InsertionOrderPreservingMap<string> PhysicalProbeFilter::ParamsToString() const {
 	InsertionOrderPreservingMap<string> result;
-	result["Operator"] = is_passthrough ? "PhysicalUseBF (passthrough)" : "PhysicalUseBF";
+	result["Operator"] = is_passthrough ? "PhysicalProbeFilter (passthrough)" : "PhysicalProbeFilter";
 
-	result["Build Table"] = to_string(bf_operation->build_table_idx);
-	result["Probe Table"] = to_string(bf_operation->probe_table_idx);
+	result["Build Table"] = to_string(filter_operation->build_table_idx);
+	result["Probe Table"] = to_string(filter_operation->probe_table_idx);
 
 	string probe_cols = "";
-	for (size_t i = 0; i < bf_operation->probe_columns.size(); i++) {
+	for (size_t i = 0; i < filter_operation->probe_columns.size(); i++) {
 		if (i > 0) {
 			probe_cols += ", ";
 		}
-		probe_cols += "(" + to_string(bf_operation->probe_columns[i].table_index) + "." +
-		              to_string(bf_operation->probe_columns[i].column_index) + ")";
+		probe_cols += "(" + to_string(filter_operation->probe_columns[i].table_index) + "." +
+		              to_string(filter_operation->probe_columns[i].column_index) + ")";
 	}
 	result["Probe Columns"] = probe_cols;
 
@@ -54,11 +54,11 @@ InsertionOrderPreservingMap<string> PhysicalUseBF::ParamsToString() const {
 	return result;
 }
 
-unique_ptr<OperatorState> PhysicalUseBF::GetOperatorState(ExecutionContext &context) const {
-	return make_uniq<PhysicalUseBFState>();
+unique_ptr<OperatorState> PhysicalProbeFilter::GetOperatorState(ExecutionContext &context) const {
+	return make_uniq<PhysicalProbeFilterState>();
 }
 
-OperatorResultType PhysicalUseBF::ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
+OperatorResultType PhysicalProbeFilter::ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
                                                   GlobalOperatorState &gstate, OperatorState &state_p) const {
 	// passthrough mode: filters pushed to scan, just forward data
 	if (is_passthrough) {
@@ -70,51 +70,51 @@ OperatorResultType PhysicalUseBF::ExecuteInternal(ExecutionContext &context, Dat
 		profiling_checked = true;
 		auto prof = GetRobustProfilingState(context.client);
 		if (prof) {
-			profiling_stats = prof->RegisterUseBF(bf_operation->build_table_idx, bf_operation->probe_table_idx,
-			                                      bf_operation->sequence_number, bf_operation->is_forward_pass);
+			profiling_stats = prof->RegisterProbeFilter(filter_operation->build_table_idx, filter_operation->probe_table_idx,
+			                                      filter_operation->sequence_number, filter_operation->is_forward_pass);
 		}
 	}
 
-	string table_name = bf_operation ? "table_" + std::to_string(bf_operation->probe_table_idx) : "unknown";
+	string table_name = filter_operation ? "table_" + std::to_string(filter_operation->probe_table_idx) : "unknown";
 
-	auto &bf_state = state_p.Cast<PhysicalUseBFState>();
+	auto &state = state_p.Cast<PhysicalProbeFilterState>();
 
 	// lazy initialization of bloom filters on first call
-	if (!bf_state.bloom_filters_initialized) {
-		D_PRINTF("[EXEC_INTERNAL] USE_BF (probe=%s) Initializing bloom filters, bound_column_indices.size()=%zu",
+	if (!state.bloom_filters_initialized) {
+		D_PRINTF("[EXEC_INTERNAL] PROBE_FILTER (probe=%s) Initializing bloom filters, bound_column_indices.size()=%zu",
 		         table_name.c_str(), bound_column_indices.size());
 		for (size_t i = 0; i < bound_column_indices.size(); i++) {
 			D_PRINTF("  bound_column_indices[%zu] = %llu", i, (unsigned long long)bound_column_indices[i]);
 		}
 
-		if (!related_create_bf_vec.empty() && bf_operation) {
+		if (!related_create_filter_vec.empty() && filter_operation) {
 			// lookup bloom filters by build column binding
-			for (const auto &build_col : bf_operation->build_columns) {
-				for (auto *create_bf : related_create_bf_vec) {
-					auto bf = create_bf->GetBloomFilter(build_col);
+			for (const auto &build_col : filter_operation->build_columns) {
+				for (auto *create_filter : related_create_filter_vec) {
+					auto bf = create_filter->GetBloomFilter(build_col);
 					if (bf) {
-						string build_table = create_bf->bf_operation
-						                         ? "table_" + std::to_string(create_bf->bf_operation->build_table_idx)
+						string build_table = create_filter->filter_operation
+						                         ? "table_" + std::to_string(create_filter->filter_operation->build_table_idx)
 						                         : "unknown";
 						D_PRINTF(
-						    "[EXEC_INTERNAL] USE_BF found bloom filter for col(%llu,%llu) from CREATE_BF (build=%s)",
+						    "[EXEC_INTERNAL] PROBE_FILTER found bloom filter for col(%llu,%llu) from CREATE_FILTER (build=%s)",
 						    (unsigned long long)build_col.table_index, (unsigned long long)build_col.column_index,
 						    build_table.c_str());
-						bf_state.bloom_filters.push_back(bf);
+						state.bloom_filters.push_back(bf);
 						break; // found the filter for this column
 					}
 				}
 			}
 		}
-		D_PRINTF("[EXEC_INTERNAL] USE_BF total bloom_filters.size() = %zu", bf_state.bloom_filters.size());
-		bf_state.bloom_filters_initialized = true;
+		D_PRINTF("[EXEC_INTERNAL] PROBE_FILTER total bloom_filters.size() = %zu", state.bloom_filters.size());
+		state.bloom_filters_initialized = true;
 	}
 
 	idx_t row_num = input.size();
 
 	// if no bloom filters or no input, just pass through
-	if (bf_state.bloom_filters.empty() || row_num == 0) {
-		D_PRINTF("[EXEC_INTERNAL] USE_BF (probe=%s) No bloom filter input/empty, row_num = %llu", table_name.c_str(),
+	if (state.bloom_filters.empty() || row_num == 0) {
+		D_PRINTF("[EXEC_INTERNAL] PROBE_FILTER (probe=%s) No bloom filter input/empty, row_num = %llu", table_name.c_str(),
 		         (unsigned long long)row_num);
 		if (profiling_stats) {
 			profiling_stats->rows_in.fetch_add(row_num, std::memory_order_relaxed);
@@ -128,15 +128,15 @@ OperatorResultType PhysicalUseBF::ExecuteInternal(ExecutionContext &context, Dat
 
 	// apply bloom filters
 	idx_t result_count = row_num;
-	auto &sel = bf_state.sel;
+	auto &sel = state.sel;
 
 	unique_ptr<ScopedTimer> probe_timer;
 	if (profiling_stats) {
 		probe_timer = make_uniq<ScopedTimer>(profiling_stats->probe_time_us);
 	}
 
-	for (int i = 0; i < bf_state.bloom_filters.size(); i++) {
-		auto bf = bf_state.bloom_filters[i];
+	for (int i = 0; i < state.bloom_filters.size(); i++) {
+		auto bf = state.bloom_filters[i];
 		if (!bf || !bf->finalized_) {
 			D_PRINT("skipped - bloom filter not ready");
 			continue;
@@ -144,12 +144,12 @@ OperatorResultType PhysicalUseBF::ExecuteInternal(ExecutionContext &context, Dat
 
 		// check if bloom filter is empty (no data inserted)
 		if (bf->IsEmpty()) {
-			string build_table = bf_operation ? "table_" + std::to_string(bf_operation->build_table_idx) : "unknown";
+			string build_table = filter_operation ? "table_" + std::to_string(filter_operation->build_table_idx) : "unknown";
 			D_PRINTF("Bloom filter empty for %s", build_table.c_str());
-			// signal any CREATE_BF siblings targeting this probe that it will be empty
+			// signal any CREATE_FILTER siblings targeting this probe that it will be empty
 			auto reg = GetProbeEmptyRegistry(context.client);
 			if (reg) {
-				auto flag = reg->GetOrCreate(bf_operation->probe_table_idx);
+				auto flag = reg->GetOrCreate(filter_operation->probe_table_idx);
 				flag->store(true, std::memory_order_relaxed);
 			}
 			// empty filter means no matches possible
@@ -161,13 +161,13 @@ OperatorResultType PhysicalUseBF::ExecuteInternal(ExecutionContext &context, Dat
 			return OperatorResultType::NEED_MORE_INPUT;
 		}
 
-		// string probe_table = bf_operation ? "table_" + std::to_string(bf_operation->probe_table_idx) : "unknown";
+		// string probe_table = filter_operation ? "table_" + std::to_string(filter_operation->probe_table_idx) : "unknown";
 		// for (int i = 0; i < bound_column_indices.size(); i++) {
 		// 	printf("bound columns for %s - %llu\n", probe_table.c_str(), bound_column_indices[i]);
 		// }
 
 		// lookup directly into selection vector
-		result_count = bf->LookupSel(input, sel, {bound_column_indices[i]}, bf_state.bit_vector.data());
+		result_count = bf->LookupSel(input, sel, {bound_column_indices[i]}, state.bit_vector.data());
 
 		// early exit if no rows passed
 		if (result_count == 0) {
@@ -204,14 +204,14 @@ OperatorResultType PhysicalUseBF::ExecuteInternal(ExecutionContext &context, Dat
 	return OperatorResultType::NEED_MORE_INPUT;
 }
 
-void PhysicalUseBF::BuildPipelines(Pipeline &current, MetaPipeline &meta_pipeline) {
+void PhysicalProbeFilter::BuildPipelines(Pipeline &current, MetaPipeline &meta_pipeline) {
 	op_state.reset();
 
 #ifdef DEBUG
 	char ptr_str[32];
 	snprintf(ptr_str, sizeof(ptr_str), "%p", (void *)this);
-	string probe_table = bf_operation ? "table_" + std::to_string(bf_operation->probe_table_idx) : "unknown";
-	Printer::Print(StringUtil::Format("[PIPELINE] USE_BF (probe=%s, this=%s) BuildPipelines called",
+	string probe_table = filter_operation ? "table_" + std::to_string(filter_operation->probe_table_idx) : "unknown";
+	Printer::Print(StringUtil::Format("[PIPELINE] PROBE_FILTER (probe=%s, this=%s) BuildPipelines called",
 	                                  probe_table.c_str(), ptr_str));
 #endif
 
@@ -219,16 +219,16 @@ void PhysicalUseBF::BuildPipelines(Pipeline &current, MetaPipeline &meta_pipelin
 	state.AddPipelineOperator(current, *this);
 
 #ifdef DEBUG
-	Printer::Print(StringUtil::Format("[PIPELINE] USE_BF (probe=%s, this=%s) added to current pipeline as operator",
+	Printer::Print(StringUtil::Format("[PIPELINE] PROBE_FILTER (probe=%s, this=%s) added to current pipeline as operator",
 	                                  probe_table.c_str(), ptr_str));
-	Printer::Print(StringUtil::Format("[PIPELINE] USE_BF (probe=%s) has %zu related CREATE_BF operators",
-	                                  probe_table.c_str(), related_create_bf_vec.size()));
+	Printer::Print(StringUtil::Format("[PIPELINE] PROBE_FILTER (probe=%s) has %zu related CREATE_FILTER operators",
+	                                  probe_table.c_str(), related_create_filter_vec.size()));
 #endif
 
-	// add dependencies on all related CREATE_BF operators
-	for (size_t i = 0; i < related_create_bf_vec.size(); i++) {
-		auto *create_bf = related_create_bf_vec[i];
-		create_bf->BuildPipelinesFromRelated(current, meta_pipeline);
+	// add dependencies on all related CREATE_FILTER operators
+	for (size_t i = 0; i < related_create_filter_vec.size(); i++) {
+		auto *create_filter = related_create_filter_vec[i];
+		create_filter->BuildPipelinesFromRelated(current, meta_pipeline);
 	}
 
 	// continue building child pipelines

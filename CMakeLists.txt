@@ -19,10 +19,10 @@ include_directories(src/include)
 set(EXTENSION_SOURCES
     src/robust_extension.cpp
     src/bloom_filter.cpp
-    src/operators/logical_create_bf.cpp
-    src/operators/physical_create_bf.cpp
-    src/operators/logical_use_bf.cpp
-    src/operators/physical_use_bf.cpp
+    src/operators/logical_create_filter.cpp
+    src/operators/physical_create_filter.cpp
+    src/operators/logical_probe_filter.cpp
+    src/operators/physical_probe_filter.cpp
     src/optimizer/robust_optimizer.cpp
     src/optimizer/table_manager.cpp
     src/utils/dag_printer.cpp

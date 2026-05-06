@@ -10,18 +10,18 @@
 
 namespace duckdb {
 
-struct CreateBFStats;
+struct CreateFilterStats;
 
-class PhysicalCreateBF : public PhysicalOperator {
+class PhysicalCreateFilter : public PhysicalOperator {
 public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::EXTENSION;
 
 public:
-	PhysicalCreateBF(PhysicalPlan &physical_plan, const shared_ptr<BloomFilterOperation> bf_operation,
+	PhysicalCreateFilter(PhysicalPlan &physical_plan, const shared_ptr<FilterOperation> filter_operation,
 	                 vector<LogicalType> types, idx_t estimated_cardinality, vector<idx_t> bound_column_indices);
 
 	// Required virtual methods
-	virtual ~PhysicalCreateBF() = default;
+	virtual ~PhysicalCreateFilter() = default;
 
 	string GetName() const override;
 	string ToString(ExplainFormat format = ExplainFormat::DEFAULT) const override;
@@ -64,7 +64,7 @@ public:
 
 public:
 	// vector<shared_ptr<FilterPlan>> filter_plans;
-	shared_ptr<BloomFilterOperation> bf_operation;
+	shared_ptr<FilterOperation> filter_operation;
 	bool is_probing_side;
 
 	// maps the column indices to resolved chunk column positions
@@ -91,7 +91,7 @@ public:
 	bool is_forward_pass = false;
 
 	// profiling
-	mutable shared_ptr<CreateBFStats> profiling_stats;
+	mutable shared_ptr<CreateFilterStats> profiling_stats;
 	mutable bool profiling_checked = false;
 };
 
@@ -105,9 +105,9 @@ struct ColumnDistinct {
 	bool over_threshold = false;
 };
 
-class CreateBFLocalSinkState : public LocalSinkState {
+class CreateFilterLocalSinkState : public LocalSinkState {
 public:
-	CreateBFLocalSinkState(ClientContext &context, const PhysicalCreateBF &op);
+	CreateFilterLocalSinkState(ClientContext &context, const PhysicalCreateFilter &op);
 
 	ClientContext &client_context;
 	unique_ptr<ColumnDataCollection> local_data;
@@ -115,11 +115,11 @@ public:
 	vector<ColumnDistinct> local_distinct;
 };
 
-class CreateBFGlobalSinkState : public GlobalSinkState {
+class CreateFilterGlobalSinkState : public GlobalSinkState {
 public:
-	CreateBFGlobalSinkState(ClientContext &context, const PhysicalCreateBF &op);
+	CreateFilterGlobalSinkState(ClientContext &context, const PhysicalCreateFilter &op);
 
-	const PhysicalCreateBF &op;
+	const PhysicalCreateFilter &op;
 	mutex glock;
 
 	// store data for sink phase
@@ -133,15 +133,15 @@ public:
 	vector<ColumnDistinct> column_distinct;
 	idx_t distinct_threshold = 50;
 
-	// shared empty-probe flag (forward pass). set by any sibling CREATE_BF / USE_BF
+	// shared empty-probe flag (forward pass). set by any sibling CREATE_FILTER / PROBE_FILTER
 	// targeting the same probe table when it detects the probe will be empty.
 	// read lock-free (relaxed) in Sink to short-circuit BF build.
 	shared_ptr<std::atomic<bool>> probe_empty_flag;
 };
 
-class CreateBFLocalSourceState : public LocalSourceState {
+class CreateFilterLocalSourceState : public LocalSourceState {
 public:
-	CreateBFLocalSourceState() {
+	CreateFilterLocalSourceState() {
 		local_current_chunk_id = 0;
 		initial = true;
 	}
@@ -154,9 +154,9 @@ public:
 	bool initial;
 };
 
-class CreateBFGlobalSourceState : public GlobalSourceState {
+class CreateFilterGlobalSourceState : public GlobalSourceState {
 public:
-	CreateBFGlobalSourceState(ClientContext &context, const PhysicalCreateBF &op);
+	CreateFilterGlobalSourceState(ClientContext &context, const PhysicalCreateFilter &op);
 
 	idx_t MaxThreads() override;
 

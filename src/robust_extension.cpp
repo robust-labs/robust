@@ -7,8 +7,8 @@
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include "duckdb/optimizer/optimizer_extension.hpp"
 #include "duckdb/planner/operator_extension.hpp"
-#include "operators/logical_create_bf.hpp"
-#include "operators/logical_use_bf.hpp"
+#include "operators/logical_create_filter.hpp"
+#include "operators/logical_probe_filter.hpp"
 #include "optimizer/robust_optimizer.hpp"
 #include "duckdb/main/config.hpp"
 
@@ -17,25 +17,25 @@
 
 namespace duckdb {
 
-class CreateBFOperatorExtension : public OperatorExtension {
+class CreateFilterOperatorExtension : public OperatorExtension {
 public:
 	std::string GetName() override {
-		return "logical_create_bf";
+		return "logical_create_filter";
 	}
 
 	unique_ptr<LogicalExtensionOperator> Deserialize(Deserializer &deserializer) override {
-		return make_uniq<LogicalCreateBF>();
+		return make_uniq<LogicalCreateFilter>();
 	}
 };
 
-class UseBFOperatorExtension : public OperatorExtension {
+class ProbeFilterOperatorExtension : public OperatorExtension {
 public:
 	std::string GetName() override {
-		return "logical_use_bf";
+		return "logical_probe_filter";
 	}
 
 	unique_ptr<LogicalExtensionOperator> Deserialize(Deserializer &deserializer) override {
-		return make_uniq<LogicalUseBF>();
+		return make_uniq<LogicalProbeFilter>();
 	}
 };
 
@@ -49,8 +49,8 @@ static void LoadInternal(ExtensionLoader &loader) {
 	OptimizerExtension::Register(instance.config, optimizer);
 
 	// Register logical operators
-	OperatorExtension::Register(instance.config, make_shared_ptr<CreateBFOperatorExtension>());
-	OperatorExtension::Register(instance.config, make_shared_ptr<UseBFOperatorExtension>());
+	OperatorExtension::Register(instance.config, make_shared_ptr<CreateFilterOperatorExtension>());
+	OperatorExtension::Register(instance.config, make_shared_ptr<ProbeFilterOperatorExtension>());
 
 	// Register profiling setting
 	auto &config = DBConfig::GetConfig(instance);

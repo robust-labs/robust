@@ -11,16 +11,16 @@
 #include <algorithm>
 #include "duckdb/common/vector.hpp"
 #include "duckdb/common/unordered_map.hpp"
-#include "../operators/logical_create_bf.hpp"
-#include "../operators/logical_use_bf.hpp"
+#include "../operators/logical_create_filter.hpp"
+#include "../operators/logical_probe_filter.hpp"
 #include "debug_utils.hpp"
 #include "robust_profiling.hpp"
 #include "../utils/dag_printer.hpp"
 #include <chrono>
 
 namespace duckdb {
-// class LogicalCreateBF;
-// class LogicalUseBF;
+// class LogicalCreateFilter;
+// class LogicalProbeFilter;
 
 vector<JoinEdge> RobustOptimizerContextState::ExtractOperators(LogicalOperator &plan) {
 	vector<LogicalOperator *> join_ops;
@@ -422,9 +422,9 @@ void RobustOptimizerContextState::DebugPrintGraph(const vector<JoinEdge> &edges)
 }
 
 void RobustOptimizerContextState::DebugPrintMST(const vector<JoinEdge> &mst_edges,
-                                             const vector<BloomFilterOperation> &bf_operations) {
+                                             const vector<FilterOperation> &filter_operations) {
 	(void)mst_edges;
-	(void)bf_operations;
+	(void)filter_operations;
 #ifdef DEBUG
 	Printer::Print("=== MST EDGES ===");
 	for (size_t i = 0; i < mst_edges.size(); i++) {
@@ -435,29 +435,29 @@ void RobustOptimizerContextState::DebugPrintMST(const vector<JoinEdge> &mst_edge
 	Printer::Print("");
 
 	Printer::Print("=== BLOOM FILTER OPERATIONS ===");
-	for (size_t i = 0; i < bf_operations.size(); i++) {
-		const auto &bf_op = bf_operations[i];
+	for (size_t i = 0; i < filter_operations.size(); i++) {
+		const auto &filter_op = filter_operations[i];
 
-		if (bf_op.is_create) {
+		if (filter_op.is_create) {
 			// CREATE operation
-			Printer::PrintF("BF Op %zu: CREATE_BF on table %llu", i, (unsigned long long)bf_op.build_table_idx);
+			Printer::PrintF("Filter Op %zu: CREATE_FILTER on table %llu", i, (unsigned long long)filter_op.build_table_idx);
 			string cols = "  Build columns: ";
-			for (const auto &col : bf_op.build_columns) {
+			for (const auto &col : filter_op.build_columns) {
 				cols += "(" + std::to_string(col.table_index) + "." + std::to_string(col.column_index) + ") ";
 			}
 			Printer::Print(cols);
 		} else {
 			// USE operation
-			Printer::PrintF("BF Op %zu: USE_BF on table %llu (using BF from table %llu)", i,
-			                (unsigned long long)bf_op.probe_table_idx, (unsigned long long)bf_op.build_table_idx);
+			Printer::PrintF("Filter Op %zu: PROBE_FILTER on table %llu (using BF from table %llu)", i,
+			                (unsigned long long)filter_op.probe_table_idx, (unsigned long long)filter_op.build_table_idx);
 			string build_cols = "  Build columns: ";
-			for (const auto &col : bf_op.build_columns) {
+			for (const auto &col : filter_op.build_columns) {
 				build_cols += "(" + std::to_string(col.table_index) + "." + std::to_string(col.column_index) + ") ";
 			}
 			Printer::Print(build_cols);
 
 			string probe_cols = "  Probe columns: ";
-			for (const auto &col : bf_op.probe_columns) {
+			for (const auto &col : filter_op.probe_columns) {
 				probe_cols += "(" + std::to_string(col.table_index) + "." + std::to_string(col.column_index) + ") ";
 			}
 			Printer::Print(probe_cols);
@@ -823,8 +823,8 @@ void RobustOptimizerContextState::PrintPhysicalPlanDAG(LogicalOperator *op) {
 	PrintPhysicalDAG(all_nodes, table_mgr);
 }
 
-std::pair<unordered_map<LogicalOperator *, vector<BloomFilterOperation>>,
-          unordered_map<LogicalOperator *, vector<BloomFilterOperation>>>
+std::pair<unordered_map<LogicalOperator *, vector<FilterOperation>>,
+          unordered_map<LogicalOperator *, vector<FilterOperation>>>
 RobustOptimizerContextState::GenerateStageModifications(const vector<JoinEdge> &mst_edges) {
 	// step 1: build rooted tree from MST
 	TreeNode *root = BuildRootedTree(const_cast<vector<JoinEdge> &>(mst_edges));
@@ -866,13 +866,13 @@ RobustOptimizerContextState::GenerateStageModifications(const vector<JoinEdge> &
 		}
 	}
 
-	unordered_map<LogicalOperator *, vector<BloomFilterOperation>> forward_bf_ops;
-	unordered_map<LogicalOperator *, vector<BloomFilterOperation>> backward_bf_ops;
+	unordered_map<LogicalOperator *, vector<FilterOperation>> forward_filter_ops;
+	unordered_map<LogicalOperator *, vector<FilterOperation>> backward_filter_ops;
 
 	// sequence counter to preserve operation order
 	idx_t sequence = 0;
 
-	// sort nodes at each level by cardinality ascending so USE_BFs are generated smallest-first
+	// sort nodes at each level by cardinality ascending so PROBE_FILTERs are generated smallest-first
 	for (int level = 1; level <= max_level; level++) {
 		std::sort(nodes_by_level[level].begin(), nodes_by_level[level].end(), [](const TreeNode *a, const TreeNode *b) {
 			return a->table_op->estimated_cardinality < b->table_op->estimated_cardinality;
@@ -912,8 +912,8 @@ RobustOptimizerContextState::GenerateStageModifications(const vector<JoinEdge> &
 				parent_columns = edge->join_columns_a;
 			}
 
-			// CREATE_BF on child
-			BloomFilterOperation create_op;
+			// CREATE_FILTER on child
+			FilterOperation create_op;
 			create_op.build_table_idx = child_node->table_idx;
 			create_op.probe_table_idx = parent_node->table_idx;
 			create_op.build_columns = child_columns;
@@ -921,10 +921,10 @@ RobustOptimizerContextState::GenerateStageModifications(const vector<JoinEdge> &
 			create_op.is_create = true;
 			create_op.is_forward_pass = true;
 			create_op.sequence_number = sequence++;
-			forward_bf_ops[child_node->table_op].push_back(create_op);
+			forward_filter_ops[child_node->table_op].push_back(create_op);
 
-			// USE_BF on parent
-			BloomFilterOperation use_op;
+			// PROBE_FILTER on parent
+			FilterOperation use_op;
 			use_op.build_table_idx = child_node->table_idx;
 			use_op.probe_table_idx = parent_node->table_idx;
 			use_op.build_columns = child_columns;
@@ -932,7 +932,7 @@ RobustOptimizerContextState::GenerateStageModifications(const vector<JoinEdge> &
 			use_op.is_create = false;
 			use_op.is_forward_pass = true;
 			use_op.sequence_number = sequence++;
-			forward_bf_ops[parent_node->table_op].push_back(use_op);
+			forward_filter_ops[parent_node->table_op].push_back(use_op);
 		}
 	}
 
@@ -969,40 +969,40 @@ RobustOptimizerContextState::GenerateStageModifications(const vector<JoinEdge> &
 				child_columns = edge->join_columns_a;
 			}
 
-			// CREATE_BF on parent
-			BloomFilterOperation create_op;
+			// CREATE_FILTER on parent
+			FilterOperation create_op;
 			create_op.build_table_idx = parent_node->table_idx;
 			create_op.probe_table_idx = child_node->table_idx;
 			create_op.build_columns = parent_columns;
 			create_op.probe_columns = child_columns;
 			create_op.is_create = true;
 			create_op.sequence_number = sequence++;
-			backward_bf_ops[parent_node->table_op].push_back(create_op);
+			backward_filter_ops[parent_node->table_op].push_back(create_op);
 
-			// USE_BF on child
-			BloomFilterOperation use_op;
+			// PROBE_FILTER on child
+			FilterOperation use_op;
 			use_op.build_table_idx = parent_node->table_idx;
 			use_op.probe_table_idx = child_node->table_idx;
 			use_op.build_columns = parent_columns;
 			use_op.probe_columns = child_columns;
 			use_op.is_create = false;
 			use_op.sequence_number = sequence++;
-			backward_bf_ops[child_node->table_op].push_back(use_op);
+			backward_filter_ops[child_node->table_op].push_back(use_op);
 		}
 	}
 
-	return {std::move(forward_bf_ops), std::move(backward_bf_ops)};
+	return {std::move(forward_filter_ops), std::move(backward_filter_ops)};
 }
 
-std::pair<unordered_map<LogicalOperator *, vector<BloomFilterOperation>>,
-          unordered_map<LogicalOperator *, vector<BloomFilterOperation>>>
+std::pair<unordered_map<LogicalOperator *, vector<FilterOperation>>,
+          unordered_map<LogicalOperator *, vector<FilterOperation>>>
 RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDAGNode *> &all_nodes,
                                                             map<ColKey, ColKey> &uf_parent) {
-	unordered_map<LogicalOperator *, vector<BloomFilterOperation>> forward_bf_ops;
-	unordered_map<LogicalOperator *, vector<BloomFilterOperation>> backward_bf_ops;
+	unordered_map<LogicalOperator *, vector<FilterOperation>> forward_filter_ops;
+	unordered_map<LogicalOperator *, vector<FilterOperation>> backward_filter_ops;
 
 	if (all_nodes.empty()) {
-		return {std::move(forward_bf_ops), std::move(backward_bf_ops)};
+		return {std::move(forward_filter_ops), std::move(backward_filter_ops)};
 	}
 
 	// group nodes by level
@@ -1042,8 +1042,8 @@ RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDA
 				auto &edge = child_node->edges_to_parents[ei];
 				auto *parent_node = child_node->parents[ei];
 
-				// CREATE_BF on child (build=child, probe=parent)
-				BloomFilterOperation create_op;
+				// CREATE_FILTER on child (build=child, probe=parent)
+				FilterOperation create_op;
 				create_op.build_table_idx = child_node->table_idx;
 				create_op.probe_table_idx = parent_node->table_idx;
 				create_op.build_columns = edge.child_cols;
@@ -1051,10 +1051,10 @@ RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDA
 				create_op.is_create = true;
 				create_op.is_forward_pass = true;
 				create_op.sequence_number = sequence++;
-				forward_bf_ops[child_node->table_op].push_back(create_op);
+				forward_filter_ops[child_node->table_op].push_back(create_op);
 
-				// USE_BF on parent
-				BloomFilterOperation use_op;
+				// PROBE_FILTER on parent
+				FilterOperation use_op;
 				use_op.build_table_idx = child_node->table_idx;
 				use_op.probe_table_idx = parent_node->table_idx;
 				use_op.build_columns = edge.child_cols;
@@ -1062,7 +1062,7 @@ RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDA
 				use_op.is_create = false;
 				use_op.is_forward_pass = true;
 				use_op.sequence_number = sequence++;
-				forward_bf_ops[parent_node->table_op].push_back(use_op);
+				forward_filter_ops[parent_node->table_op].push_back(use_op);
 			}
 		}
 	}
@@ -1073,10 +1073,10 @@ RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDA
 
 	// tracks which table created the BF for each equivalence class in the backward pass.
 	// key: equiv class root (from union-find)
-	// value: (build_table_op, index into backward_bf_ops[build_table_op], build_table_idx, build_columns)
+	// value: (build_table_op, index into backward_filter_ops[build_table_op], build_table_idx, build_columns)
 	struct EquivBFSource {
 		LogicalOperator *build_table_op;
-		idx_t create_op_index; // index into backward_bf_ops[build_table_op]
+		idx_t create_op_index; // index into backward_filter_ops[build_table_op]
 		idx_t build_table_idx;
 		vector<ColumnBinding> build_columns;
 	};
@@ -1108,8 +1108,8 @@ RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDA
 					auto &source = it->second;
 
 					// add child's probe columns (and matching build columns) to the existing
-					// CREATE_BF so linking can find it and the merge logic preserves them
-					auto &create_op = backward_bf_ops[source.build_table_op][source.create_op_index];
+					// CREATE_FILTER so linking can find it and the merge logic preserves them
+					auto &create_op = backward_filter_ops[source.build_table_op][source.create_op_index];
 					for (idx_t ci = 0; ci < edge.child_cols.size(); ci++) {
 						create_op.probe_columns.push_back(edge.child_cols[ci]);
 						create_op.build_columns.push_back(source.build_columns[ci < source.build_columns.size()
@@ -1117,7 +1117,7 @@ RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDA
 						                                                            : source.build_columns.size() - 1]);
 					}
 
-					BloomFilterOperation use_op;
+					FilterOperation use_op;
 					use_op.build_table_idx = source.build_table_idx;
 					use_op.probe_table_idx = child_node->table_idx;
 					use_op.build_columns = source.build_columns;
@@ -1125,10 +1125,10 @@ RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDA
 					use_op.is_create = false;
 					use_op.is_forward_pass = false;
 					use_op.sequence_number = sequence++;
-					backward_bf_ops[child_node->table_op].push_back(use_op);
+					backward_filter_ops[child_node->table_op].push_back(use_op);
 				} else {
 					// new equivalence class at this edge — create BF on parent, use on child
-					BloomFilterOperation create_op;
+					FilterOperation create_op;
 					create_op.build_table_idx = parent_node->table_idx;
 					create_op.probe_table_idx = child_node->table_idx;
 					create_op.build_columns = edge.parent_cols;
@@ -1137,10 +1137,10 @@ RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDA
 					create_op.is_forward_pass = false;
 					create_op.sequence_number = sequence++;
 
-					idx_t create_idx = backward_bf_ops[parent_node->table_op].size();
-					backward_bf_ops[parent_node->table_op].push_back(create_op);
+					idx_t create_idx = backward_filter_ops[parent_node->table_op].size();
+					backward_filter_ops[parent_node->table_op].push_back(create_op);
 
-					BloomFilterOperation use_op;
+					FilterOperation use_op;
 					use_op.build_table_idx = parent_node->table_idx;
 					use_op.probe_table_idx = child_node->table_idx;
 					use_op.build_columns = edge.parent_cols;
@@ -1148,7 +1148,7 @@ RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDA
 					use_op.is_create = false;
 					use_op.is_forward_pass = false;
 					use_op.sequence_number = sequence++;
-					backward_bf_ops[child_node->table_op].push_back(use_op);
+					backward_filter_ops[child_node->table_op].push_back(use_op);
 
 					// record this as the source for this equivalence class
 					equiv_class_bf_source[equiv_root] = {parent_node->table_op, create_idx,
@@ -1158,47 +1158,47 @@ RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDA
 		}
 	}
 
-	return {std::move(forward_bf_ops), std::move(backward_bf_ops)};
+	return {std::move(forward_filter_ops), std::move(backward_filter_ops)};
 }
 
 unique_ptr<LogicalOperator>
 RobustOptimizerContextState::BuildStackedBFOperators(unique_ptr<LogicalOperator> base_plan,
-                                                  const vector<BloomFilterOperation> &bf_ops, bool reverse_order) {
-	if (bf_ops.empty()) {
+                                                  const vector<FilterOperation> &filter_ops, bool reverse_order) {
+	if (filter_ops.empty()) {
 		return base_plan;
 	}
 
 	// preserve order and only merge consecutive CREATEs for the same table
-	vector<BloomFilterOperation> merged_ops;
+	vector<FilterOperation> merged_ops;
 
-	for (size_t i = 0; i < bf_ops.size(); i++) {
-		const auto &bf_op = bf_ops[i];
+	for (size_t i = 0; i < filter_ops.size(); i++) {
+		const auto &filter_op = filter_ops[i];
 
-		if (bf_op.is_create) {
+		if (filter_op.is_create) {
 			// Check if we can merge with subsequent consecutive CREATEs for same table
-			vector<BloomFilterOperation> consecutive_creates;
-			consecutive_creates.push_back(bf_op);
+			vector<FilterOperation> consecutive_creates;
+			consecutive_creates.push_back(filter_op);
 
 			// Look ahead for consecutive CREATEs on the same table
 			size_t j = i + 1;
-			while (j < bf_ops.size() && bf_ops[j].is_create && bf_ops[j].build_table_idx == bf_op.build_table_idx) {
-				consecutive_creates.push_back(bf_ops[j]);
+			while (j < filter_ops.size() && filter_ops[j].is_create && filter_ops[j].build_table_idx == filter_op.build_table_idx) {
+				consecutive_creates.push_back(filter_ops[j]);
 				j++;
 			}
 
 			if (consecutive_creates.size() == 1) {
 				// single CREATE, no merging needed
-				merged_ops.push_back(bf_op);
+				merged_ops.push_back(filter_op);
 			} else {
 				// multiple consecutive CREATEs for same table - merge them
-				BloomFilterOperation merged_op = consecutive_creates[0];
+				FilterOperation merged_op = consecutive_creates[0];
 				merged_op.build_columns.clear();
 
 				// collect all build columns
 				for (const auto &op : consecutive_creates) {
 					// for (const auto &col : op.build_columns) {
 					for (idx_t x = 0; x < op.build_columns.size(); x++) {
-						// __assert(op.build_columns.size() == op.probe_columns.size(),"Merging consecutive CREATE_BFs:
+						// __assert(op.build_columns.size() == op.probe_columns.size(),"Merging consecutive CREATE_FILTERs:
 						// Build columns and probe columns size different");
 						merged_op.build_columns.push_back(op.build_columns[x]);
 						merged_op.probe_columns.push_back(op.probe_columns[x]);
@@ -1211,7 +1211,7 @@ RobustOptimizerContextState::BuildStackedBFOperators(unique_ptr<LogicalOperator>
 			i = j - 1;
 		} else {
 			// USE operation - add as is
-			merged_ops.push_back(bf_op);
+			merged_ops.push_back(filter_op);
 		}
 	}
 
@@ -1219,8 +1219,8 @@ RobustOptimizerContextState::BuildStackedBFOperators(unique_ptr<LogicalOperator>
 	unique_ptr<LogicalOperator> current = std::move(base_plan);
 
 	// helper to set estimated_cardinality from the underlying scan table
-	auto set_cardinality = [&](LogicalOperator *op, const BloomFilterOperation &bf_op) {
-		idx_t table_idx = bf_op.is_create ? bf_op.build_table_idx : bf_op.probe_table_idx;
+	auto set_cardinality = [&](LogicalOperator *op, const FilterOperation &filter_op) {
+		idx_t table_idx = filter_op.is_create ? filter_op.build_table_idx : filter_op.probe_table_idx;
 		auto it = table_mgr.table_lookup.find(table_idx);
 		if (it != table_mgr.table_lookup.end()) {
 			op->estimated_cardinality = it->second.estimated_cardinality;
@@ -1229,34 +1229,34 @@ RobustOptimizerContextState::BuildStackedBFOperators(unique_ptr<LogicalOperator>
 
 	if (reverse_order) {
 		for (auto it = merged_ops.rbegin(); it != merged_ops.rend(); ++it) {
-			const auto &bf_op = *it;
+			const auto &filter_op = *it;
 			unique_ptr<LogicalOperator> new_op;
 
-			if (bf_op.is_create) {
-				auto create = make_uniq<LogicalCreateBF>(bf_op);
-				create->is_forward_pass = bf_op.is_forward_pass;
+			if (filter_op.is_create) {
+				auto create = make_uniq<LogicalCreateFilter>(filter_op);
+				create->is_forward_pass = filter_op.is_forward_pass;
 				new_op = std::move(create);
 			} else {
-				new_op = make_uniq<LogicalUseBF>(bf_op);
+				new_op = make_uniq<LogicalProbeFilter>(filter_op);
 			}
 
-			set_cardinality(new_op.get(), bf_op);
+			set_cardinality(new_op.get(), filter_op);
 			new_op->AddChild(std::move(current));
 			current = std::move(new_op);
 		}
 	} else {
-		for (const auto &bf_op : merged_ops) {
+		for (const auto &filter_op : merged_ops) {
 			unique_ptr<LogicalOperator> new_op;
 
-			if (bf_op.is_create) {
-				auto create = make_uniq<LogicalCreateBF>(bf_op);
-				create->is_forward_pass = bf_op.is_forward_pass;
+			if (filter_op.is_create) {
+				auto create = make_uniq<LogicalCreateFilter>(filter_op);
+				create->is_forward_pass = filter_op.is_forward_pass;
 				new_op = std::move(create);
 			} else {
-				new_op = make_uniq<LogicalUseBF>(bf_op);
+				new_op = make_uniq<LogicalProbeFilter>(filter_op);
 			}
 
-			set_cardinality(new_op.get(), bf_op);
+			set_cardinality(new_op.get(), filter_op);
 			new_op->AddChild(std::move(current));
 			current = std::move(new_op);
 		}
@@ -1266,24 +1266,24 @@ RobustOptimizerContextState::BuildStackedBFOperators(unique_ptr<LogicalOperator>
 
 unique_ptr<LogicalOperator> RobustOptimizerContextState::ApplyStageModifications(
     unique_ptr<LogicalOperator> plan,
-    const unordered_map<LogicalOperator *, vector<BloomFilterOperation>> &forward_bf_ops,
-    const unordered_map<LogicalOperator *, vector<BloomFilterOperation>> &backward_bf_ops) {
+    const unordered_map<LogicalOperator *, vector<FilterOperation>> &forward_filter_ops,
+    const unordered_map<LogicalOperator *, vector<FilterOperation>> &backward_filter_ops) {
 	// first apply modifications to children recursively
 	for (auto &child : plan->children) {
-		child = ApplyStageModifications(std::move(child), forward_bf_ops, backward_bf_ops);
+		child = ApplyStageModifications(std::move(child), forward_filter_ops, backward_filter_ops);
 	}
 
 	LogicalOperator *original_op = plan.get();
 
 	// add the forward pass bf operators above the base table operator
-	auto forward_it = forward_bf_ops.find(original_op);
-	if (forward_it != forward_bf_ops.end()) {
+	auto forward_it = forward_filter_ops.find(original_op);
+	if (forward_it != forward_filter_ops.end()) {
 		plan = BuildStackedBFOperators(std::move(plan), forward_it->second, false);
 	}
 
 	// add the backward pass bf operators above the forward pass bf operators
-	auto backward_it = backward_bf_ops.find(original_op);
-	if (backward_it != backward_bf_ops.end()) {
+	auto backward_it = backward_filter_ops.find(original_op);
+	if (backward_it != backward_filter_ops.end()) {
 		// for (size_t i = 0; i < backward_it->second.size(); i++) {
 		// 	const auto &op = backward_it->second[i];
 		// }
@@ -1293,17 +1293,17 @@ unique_ptr<LogicalOperator> RobustOptimizerContextState::ApplyStageModifications
 	return plan;
 }
 
-void RobustOptimizerContextState::LinkUseBFToCreateBF(LogicalOperator *plan) {
+void RobustOptimizerContextState::LinkProbeFilterToCreateFilter(LogicalOperator *plan) {
 	if (!plan) {
 		return;
 	}
 
-	// helper struct to uniquely identify a CREATE_BF
-	struct CreateBFKey {
+	// helper struct to uniquely identify a CREATE_FILTER
+	struct CreateFilterKey {
 		idx_t build_table_idx;
 		vector<ColumnBinding> build_columns;
 
-		bool operator==(const CreateBFKey &other) const {
+		bool operator==(const CreateFilterKey &other) const {
 			if (build_table_idx != other.build_table_idx) {
 				return false;
 			}
@@ -1320,8 +1320,8 @@ void RobustOptimizerContextState::LinkUseBFToCreateBF(LogicalOperator *plan) {
 		}
 	};
 
-	struct CreateBFKeyHash {
-		size_t operator()(const CreateBFKey &key) const {
+	struct CreateFilterKeyHash {
+		size_t operator()(const CreateFilterKey &key) const {
 			size_t hash = std::hash<idx_t>()(key.build_table_idx);
 			for (const auto &col : key.build_columns) {
 				hash ^= (std::hash<idx_t>()(col.table_index) << 1);
@@ -1331,8 +1331,8 @@ void RobustOptimizerContextState::LinkUseBFToCreateBF(LogicalOperator *plan) {
 		}
 	};
 
-	// pass 1: collect all CREATE_BF operators (multiple per build table possible)
-	unordered_map<idx_t, vector<LogicalCreateBF *>> create_bf_by_table;
+	// pass 1: collect all CREATE_FILTER operators (multiple per build table possible)
+	unordered_map<idx_t, vector<LogicalCreateFilter *>> create_filter_by_table;
 	vector<LogicalOperator *> queue;
 	queue.push_back(plan);
 
@@ -1341,9 +1341,9 @@ void RobustOptimizerContextState::LinkUseBFToCreateBF(LogicalOperator *plan) {
 		queue.pop_back();
 
 		if (current->type == LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR) {
-			auto *create_bf = dynamic_cast<LogicalCreateBF *>(current);
-			if (create_bf) {
-				create_bf_by_table[create_bf->bf_operation.build_table_idx].push_back(create_bf);
+			auto *create_filter = dynamic_cast<LogicalCreateFilter *>(current);
+			if (create_filter) {
+				create_filter_by_table[create_filter->filter_operation.build_table_idx].push_back(create_filter);
 			}
 		}
 
@@ -1352,7 +1352,7 @@ void RobustOptimizerContextState::LinkUseBFToCreateBF(LogicalOperator *plan) {
 		}
 	}
 
-	// pass 2: link all USE_BF operators to their corresponding CREATE_BF
+	// pass 2: link all PROBE_FILTER operators to their corresponding CREATE_FILTER
 	queue.clear();
 	queue.push_back(plan);
 
@@ -1361,32 +1361,32 @@ void RobustOptimizerContextState::LinkUseBFToCreateBF(LogicalOperator *plan) {
 		queue.pop_back();
 
 		if (current->type == LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR) {
-			auto *use_bf = dynamic_cast<LogicalUseBF *>(current);
-			if (use_bf) {
-				idx_t build_table_idx = use_bf->bf_operation.build_table_idx;
-				idx_t probe_table_idx = use_bf->bf_operation.probe_table_idx;
+			auto *probe_filter = dynamic_cast<LogicalProbeFilter *>(current);
+			if (probe_filter) {
+				idx_t build_table_idx = probe_filter->filter_operation.build_table_idx;
+				idx_t probe_table_idx = probe_filter->filter_operation.probe_table_idx;
 
-				auto it = create_bf_by_table.find(build_table_idx);
-				if (it != create_bf_by_table.end()) {
-					for (auto *create_bf : it->second) {
-						for (const auto &pc : create_bf->bf_operation.probe_columns) {
+				auto it = create_filter_by_table.find(build_table_idx);
+				if (it != create_filter_by_table.end()) {
+					for (auto *create_filter : it->second) {
+						for (const auto &pc : create_filter->filter_operation.probe_columns) {
 							if (pc.table_index == probe_table_idx) {
-								use_bf->related_create_bf = create_bf;
-								create_bf->related_use_bf.push_back(use_bf);
+								probe_filter->related_create_filter = create_filter;
+								create_filter->related_probe_filter.push_back(probe_filter);
 								break;
 							}
 						}
-						if (use_bf->related_create_bf) {
+						if (probe_filter->related_create_filter) {
 							break;
 						}
 					}
-					if (!use_bf->related_create_bf) {
-						D_PRINTF("[LINK] WARNING: No CREATE_BF with matching probe table for USE_BF "
+					if (!probe_filter->related_create_filter) {
+						D_PRINTF("[LINK] WARNING: No CREATE_FILTER with matching probe table for PROBE_FILTER "
 						         "(build=table_%llu, probe=table_%llu)",
 						         (unsigned long long)build_table_idx, (unsigned long long)probe_table_idx);
 					}
 				} else {
-					D_PRINTF("[LINK] WARNING: No CREATE_BF found for USE_BF (build=table_%llu, probe=table_%llu)",
+					D_PRINTF("[LINK] WARNING: No CREATE_FILTER found for PROBE_FILTER (build=table_%llu, probe=table_%llu)",
 					         (unsigned long long)build_table_idx, (unsigned long long)probe_table_idx);
 				}
 			}
@@ -1403,8 +1403,8 @@ void RobustOptimizerContextState::SetupDynamicFilterPushdown(LogicalOperator *pl
 		return;
 	}
 
-	// collect all forward-pass LogicalCreateBF operators
-	vector<LogicalCreateBF *> forward_creates;
+	// collect all forward-pass LogicalCreateFilter operators
+	vector<LogicalCreateFilter *> forward_creates;
 	vector<LogicalOperator *> queue;
 	queue.push_back(plan);
 
@@ -1413,10 +1413,10 @@ void RobustOptimizerContextState::SetupDynamicFilterPushdown(LogicalOperator *pl
 		queue.pop_back();
 
 		if (current->type == LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR) {
-			auto *create_bf = dynamic_cast<LogicalCreateBF *>(current);
-			if (create_bf) {
-				if (create_bf->is_forward_pass) {
-					forward_creates.push_back(create_bf);
+			auto *create_filter = dynamic_cast<LogicalCreateFilter *>(current);
+			if (create_filter) {
+				if (create_filter->is_forward_pass) {
+					forward_creates.push_back(create_filter);
 				}
 			}
 		}
@@ -1426,20 +1426,20 @@ void RobustOptimizerContextState::SetupDynamicFilterPushdown(LogicalOperator *pl
 		}
 	}
 
-	D_PRINTF("[PUSHDOWN-SETUP] found %zu forward CREATE_BFs", forward_creates.size());
+	D_PRINTF("[PUSHDOWN-SETUP] found %zu forward CREATE_FILTERs", forward_creates.size());
 
-	// for each forward-pass CREATE_BF, set up pushdown targets
-	for (auto *create_bf : forward_creates) {
-		D_PRINTF("[PUSHDOWN-SETUP] CREATE_BF build=table_%llu, related_use_bf=%zu",
-		         (unsigned long long)create_bf->bf_operation.build_table_idx, create_bf->related_use_bf.size());
-		for (auto *use_bf : create_bf->related_use_bf) {
-			if (!use_bf->bf_operation.is_forward_pass) {
-				D_PRINTF("[PUSHDOWN-SETUP]   skipping USE_BF probe=table_%llu (not forward)",
-				         (unsigned long long)use_bf->bf_operation.probe_table_idx);
+	// for each forward-pass CREATE_FILTER, set up pushdown targets
+	for (auto *create_filter : forward_creates) {
+		D_PRINTF("[PUSHDOWN-SETUP] CREATE_FILTER build=table_%llu, related_probe_filter=%zu",
+		         (unsigned long long)create_filter->filter_operation.build_table_idx, create_filter->related_probe_filter.size());
+		for (auto *probe_filter : create_filter->related_probe_filter) {
+			if (!probe_filter->filter_operation.is_forward_pass) {
+				D_PRINTF("[PUSHDOWN-SETUP]   skipping PROBE_FILTER probe=table_%llu (not forward)",
+				         (unsigned long long)probe_filter->filter_operation.probe_table_idx);
 				continue;
 			}
 
-			idx_t probe_table_idx = use_bf->bf_operation.probe_table_idx;
+			idx_t probe_table_idx = probe_filter->filter_operation.probe_table_idx;
 			auto it = table_mgr.table_lookup.find(probe_table_idx);
 			if (it == table_mgr.table_lookup.end()) {
 				D_PRINTF("[PUSHDOWN-SETUP]   probe table_%llu not in table_lookup",
@@ -1459,8 +1459,8 @@ void RobustOptimizerContextState::SetupDynamicFilterPushdown(LogicalOperator *pl
 
 			// resolve each probe column to a scan column index
 			auto &col_ids = get->GetColumnIds();
-			for (size_t i = 0; i < use_bf->bf_operation.probe_columns.size(); i++) {
-				const auto &probe_col = use_bf->bf_operation.probe_columns[i];
+			for (size_t i = 0; i < probe_filter->filter_operation.probe_columns.size(); i++) {
+				const auto &probe_col = probe_filter->filter_operation.probe_columns[i];
 
 				idx_t scan_col_idx = probe_col.column_index;
 				if (scan_col_idx >= col_ids.size()) {
@@ -1481,30 +1481,30 @@ void RobustOptimizerContextState::SetupDynamicFilterPushdown(LogicalOperator *pl
 					col_name = get->names[primary_idx];
 				}
 
-				LogicalCreateBF::DynamicFilterTarget target;
+				LogicalCreateFilter::DynamicFilterTarget target;
 				target.dynamic_filters = get->dynamic_filters;
 				target.scan_column_index = scan_col_idx;
 				target.probe_column = probe_col;
 				target.column_type = col_type;
 				target.column_name = col_name;
-				create_bf->pushdown_targets.push_back(std::move(target));
+				create_filter->pushdown_targets.push_back(std::move(target));
 			}
 
-			// mark USE_BF as passthrough since filters are pushed to scan
-			use_bf->is_passthrough = true;
+			// mark PROBE_FILTER as passthrough since filters are pushed to scan
+			probe_filter->is_passthrough = true;
 
-			D_PRINTF("[PUSHDOWN] forward CREATE_BF (build=table_%llu) -> USE_BF (probe=table_%llu) pushed %zu targets",
-			         (unsigned long long)create_bf->bf_operation.build_table_idx, (unsigned long long)probe_table_idx,
-			         create_bf->pushdown_targets.size());
+			D_PRINTF("[PUSHDOWN] forward CREATE_FILTER (build=table_%llu) -> PROBE_FILTER (probe=table_%llu) pushed %zu targets",
+			         (unsigned long long)create_filter->filter_operation.build_table_idx, (unsigned long long)probe_table_idx,
+			         create_filter->pushdown_targets.size());
 		}
 	}
 }
 
-// find the deepest CREATE_BF in a linear chain (following child[0])
-static LogicalOperator *FindDeepestCreateBF(LogicalOperator *node) {
+// find the deepest CREATE_FILTER in a linear chain (following child[0])
+static LogicalOperator *FindDeepestCreateFilter(LogicalOperator *node) {
 	LogicalOperator *deepest = nullptr;
 	while (node) {
-		if (node->type == LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR && dynamic_cast<LogicalCreateBF *>(node)) {
+		if (node->type == LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR && dynamic_cast<LogicalCreateFilter *>(node)) {
 			deepest = node;
 		}
 		if (node->children.empty()) {
@@ -1515,12 +1515,12 @@ static LogicalOperator *FindDeepestCreateBF(LogicalOperator *node) {
 	return deepest;
 }
 
-void RobustOptimizerContextState::LiftCreateBFAboveMarkJoin(unique_ptr<LogicalOperator> &plan) {
+void RobustOptimizerContextState::LiftCreateFilterAboveMarkJoin(unique_ptr<LogicalOperator> &plan) {
 	if (!plan) {
 		return;
 	}
 	for (auto &child : plan->children) {
-		LiftCreateBFAboveMarkJoin(child);
+		LiftCreateFilterAboveMarkJoin(child);
 	}
 
 	// match: MARK JOIN with BF operators in probe chain
@@ -1533,7 +1533,7 @@ void RobustOptimizerContextState::LiftCreateBFAboveMarkJoin(unique_ptr<LogicalOp
 	}
 
 	auto &probe_child = plan->children[0];
-	auto *deepest = FindDeepestCreateBF(probe_child.get());
+	auto *deepest = FindDeepestCreateFilter(probe_child.get());
 	if (!deepest) {
 		return;
 	}
@@ -1548,24 +1548,24 @@ void RobustOptimizerContextState::LiftCreateBFAboveMarkJoin(unique_ptr<LogicalOp
 	plan = std::move(block);
 }
 
-void RobustOptimizerContextState::LiftCreateBFAboveFilter(unique_ptr<LogicalOperator> &plan) {
+void RobustOptimizerContextState::LiftCreateFilterAboveFilter(unique_ptr<LogicalOperator> &plan) {
 	if (!plan) {
 		return;
 	}
 	for (auto &child : plan->children) {
-		LiftCreateBFAboveFilter(child);
+		LiftCreateFilterAboveFilter(child);
 	}
 
 	if (plan->type != LogicalOperatorType::LOGICAL_FILTER) {
 		return;
 	}
 
-	auto *deepest = FindDeepestCreateBF(plan->children[0].get());
+	auto *deepest = FindDeepestCreateFilter(plan->children[0].get());
 	if (!deepest) {
 		return;
 	}
 
-	// same block-detach logic as LiftCreateBFAboveMarkJoin
+	// same block-detach logic as LiftCreateFilterAboveMarkJoin
 	auto below_deepest = std::move(deepest->children[0]);
 	deepest->children.clear();
 	auto block = std::move(plan->children[0]);
@@ -1604,7 +1604,7 @@ unique_ptr<LogicalOperator> RobustOptimizerContextState::Optimize(unique_ptr<Log
 		heuristic = heuristic_val.GetValue<string>();
 	}
 
-	unordered_map<LogicalOperator *, vector<BloomFilterOperation>> forward_bf_ops, backward_bf_ops;
+	unordered_map<LogicalOperator *, vector<FilterOperation>> forward_filter_ops, backward_filter_ops;
 
 	if (heuristic == "join_order") {
 		// use DuckDB's join order DAG
@@ -1627,15 +1627,15 @@ unique_ptr<LogicalOperator> RobustOptimizerContextState::Optimize(unique_ptr<Log
 			PrintPhysicalDAG(all_nodes, table_mgr);
 		}
 
-		auto bf_ops = GenerateStageModificationsFromDAG(all_nodes, uf_parent);
-		forward_bf_ops = std::move(bf_ops.first);
-		backward_bf_ops = std::move(bf_ops.second);
+		auto filter_ops = GenerateStageModificationsFromDAG(all_nodes, uf_parent);
+		forward_filter_ops = std::move(filter_ops.first);
+		backward_filter_ops = std::move(filter_ops.second);
 	} else {
 		// default: largest_root
 		mst_edges = LargestRoot(edges);
-		auto bf_ops = GenerateStageModifications(mst_edges);
-		forward_bf_ops = std::move(bf_ops.first);
-		backward_bf_ops = std::move(bf_ops.second);
+		auto filter_ops = GenerateStageModifications(mst_edges);
+		forward_filter_ops = std::move(filter_ops.first);
+		backward_filter_ops = std::move(filter_ops.second);
 	}
 
 	// check pass mode setting
@@ -1645,41 +1645,41 @@ unique_ptr<LogicalOperator> RobustOptimizerContextState::Optimize(unique_ptr<Log
 		pass_mode = pass_mode_val.GetValue<string>();
 	}
 	if (pass_mode == "forward_only") {
-		backward_bf_ops.clear();
+		backward_filter_ops.clear();
 	}
 
-	// step 4: insert create_bf/use_bf operators into the plan
-	plan = ApplyStageModifications(std::move(plan), forward_bf_ops, backward_bf_ops);
+	// step 4: insert create_filter/probe_filter operators into the plan
+	plan = ApplyStageModifications(std::move(plan), forward_filter_ops, backward_filter_ops);
 
 	// step 4.5a: lift BF operators above MARK_JOIN so they sit between FILTER and MARK_JOIN
-	LiftCreateBFAboveMarkJoin(plan);
+	LiftCreateFilterAboveMarkJoin(plan);
 
 	// step 4.5b: lift BF operators above FILTER so bloom filters are built from filtered output
-	LiftCreateBFAboveFilter(plan);
+	LiftCreateFilterAboveFilter(plan);
 
-	// step 5: link USE_BF operators to their corresponding CREATE_BF operators
-	LinkUseBFToCreateBF(plan.get());
+	// step 5: link PROBE_FILTER operators to their corresponding CREATE_FILTER operators
+	LinkProbeFilterToCreateFilter(plan.get());
 
 	// step 6: set up dynamic filter pushdown for forward-pass operators
 	SetupDynamicFilterPushdown(plan.get());
 
 	// // combine all bloom filter operations for debug (preserving order)
-	// vector<BloomFilterOperation> all_bf_operations;
-	// for (const auto &pair : bf_ops.first) {
-	// 	all_bf_operations.insert(all_bf_operations.end(), pair.second.begin(), pair.second.end());
+	// vector<FilterOperation> all_filter_operations;
+	// for (const auto &pair : filter_ops.first) {
+	// 	all_filter_operations.insert(all_filter_operations.end(), pair.second.begin(), pair.second.end());
 	// }
-	// for (const auto &pair : bf_ops.second) {
-	// 	all_bf_operations.insert(all_bf_operations.end(), pair.second.begin(), pair.second.end());
+	// for (const auto &pair : filter_ops.second) {
+	// 	all_filter_operations.insert(all_filter_operations.end(), pair.second.begin(), pair.second.end());
 	// }
 	//
 	// // sort by sequence number to restore generation order
-	// std::sort(all_bf_operations.begin(), all_bf_operations.end(),
-	// 	[](const BloomFilterOperation &a, const BloomFilterOperation &b) {
+	// std::sort(all_filter_operations.begin(), all_filter_operations.end(),
+	// 	[](const FilterOperation &a, const FilterOperation &b) {
 	// 		return a.sequence_number < b.sequence_number;
 	// 	});
 	//
 	// // debug print with correct ordering
-	// DebugPrintMST(mst_edges, all_bf_operations);
+	// DebugPrintMST(mst_edges, all_filter_operations);
 	return plan;
 }
 

@@ -13,7 +13,7 @@
 
 namespace duckdb {
 
-struct CreateBFStats {
+struct CreateFilterStats {
 	idx_t sequence_number = 0;
 	idx_t build_table_idx = 0;
 	vector<idx_t> probe_table_indices;
@@ -24,7 +24,7 @@ struct CreateBFStats {
 	std::atomic<int64_t> source_time_us {0};
 };
 
-struct UseBFStats {
+struct ProbeFilterStats {
 	idx_t sequence_number = 0;
 	idx_t build_table_idx = 0;
 	idx_t probe_table_idx = 0;
@@ -61,8 +61,8 @@ public:
 	std::map<idx_t, string> table_names;
 
 	mutex stats_lock;
-	vector<shared_ptr<CreateBFStats>> create_bf_stats;
-	vector<shared_ptr<UseBFStats>> use_bf_stats;
+	vector<shared_ptr<CreateFilterStats>> create_filter_stats;
+	vector<shared_ptr<ProbeFilterStats>> probe_filter_stats;
 
 	string GetName(idx_t table_idx) const {
 		auto it = table_names.find(table_idx);
@@ -72,10 +72,10 @@ public:
 		return "table_" + std::to_string(table_idx);
 	}
 
-	shared_ptr<CreateBFStats> RegisterCreateBF(idx_t build_table_idx, const vector<ColumnBinding> &probe_columns,
+	shared_ptr<CreateFilterStats> RegisterCreateFilter(idx_t build_table_idx, const vector<ColumnBinding> &probe_columns,
 	                                           idx_t sequence_number, bool is_forward_pass) {
 		lock_guard<mutex> lock(stats_lock);
-		auto stats = make_shared_ptr<CreateBFStats>();
+		auto stats = make_shared_ptr<CreateFilterStats>();
 		stats->sequence_number = sequence_number;
 		stats->build_table_idx = build_table_idx;
 		stats->is_forward_pass = is_forward_pass;
@@ -95,19 +95,19 @@ public:
 				}
 			}
 		}
-		create_bf_stats.push_back(stats);
+		create_filter_stats.push_back(stats);
 		return stats;
 	}
 
-	shared_ptr<UseBFStats> RegisterUseBF(idx_t build_table_idx, idx_t probe_table_idx, idx_t sequence_number,
+	shared_ptr<ProbeFilterStats> RegisterProbeFilter(idx_t build_table_idx, idx_t probe_table_idx, idx_t sequence_number,
 	                                     bool is_forward_pass) {
 		lock_guard<mutex> lock(stats_lock);
-		auto stats = make_shared_ptr<UseBFStats>();
+		auto stats = make_shared_ptr<ProbeFilterStats>();
 		stats->sequence_number = sequence_number;
 		stats->build_table_idx = build_table_idx;
 		stats->probe_table_idx = probe_table_idx;
 		stats->is_forward_pass = is_forward_pass;
-		use_bf_stats.push_back(stats);
+		probe_filter_stats.push_back(stats);
 		return stats;
 	}
 
@@ -130,11 +130,11 @@ public:
 			size_t idx;
 		};
 		vector<StatsEntry> entries;
-		for (size_t i = 0; i < create_bf_stats.size(); i++) {
-			entries.push_back({create_bf_stats[i]->sequence_number, true, i});
+		for (size_t i = 0; i < create_filter_stats.size(); i++) {
+			entries.push_back({create_filter_stats[i]->sequence_number, true, i});
 		}
-		for (size_t i = 0; i < use_bf_stats.size(); i++) {
-			entries.push_back({use_bf_stats[i]->sequence_number, false, i});
+		for (size_t i = 0; i < probe_filter_stats.size(); i++) {
+			entries.push_back({probe_filter_stats[i]->sequence_number, false, i});
 		}
 		std::sort(entries.begin(), entries.end(),
 		          [](const StatsEntry &a, const StatsEntry &b) { return a.seq < b.seq; });
@@ -147,7 +147,7 @@ public:
 		Printer::Print("");
 		for (auto &e : entries) {
 			if (e.is_create) {
-				auto &s = create_bf_stats[e.idx];
+				auto &s = create_filter_stats[e.idx];
 				string pass = s->is_forward_pass ? "FWD" : "BWD";
 				string probe_names;
 				for (size_t pi = 0; pi < s->probe_table_indices.size(); pi++) {
@@ -158,7 +158,7 @@ public:
 				if (probe_names.empty())
 					probe_names = "?";
 				Printer::PrintF(
-				    "CREATE_BF [%s]: [build=%s -> probe=%s] %llu rows, sink=%lldus, finalize=%lldus, source=%lldus",
+				    "CREATE_FILTER [%s]: [build=%s -> probe=%s] %llu rows, sink=%lldus, finalize=%lldus, source=%lldus",
 				    pass.c_str(), GetName(s->build_table_idx).c_str(), probe_names.c_str(),
 				    (unsigned long long)s->rows_materialized.load(), (long long)s->sink_time_us.load(),
 				    (long long)s->finalize_time_us.load(), (long long)s->source_time_us.load());
@@ -166,12 +166,12 @@ public:
 				total_source_us += s->source_time_us.load();
 				total_finalize_us += s->finalize_time_us.load();
 			} else {
-				auto &s = use_bf_stats[e.idx];
+				auto &s = probe_filter_stats[e.idx];
 				string pass = s->is_forward_pass ? "FWD" : "BWD";
 				idx_t ri = s->rows_in.load();
 				idx_t ro = s->rows_out.load();
 				double sel = ri > 0 ? 100.0 * (double)ro / ri : 0.0;
-				Printer::PrintF("USE_BF    [%s]: [build=%s, probe=%s] in=%llu, out=%llu, sel=%.1f%%, probe=%lldus",
+				Printer::PrintF("PROBE_FILTER    [%s]: [build=%s, probe=%s] in=%llu, out=%llu, sel=%.1f%%, probe=%lldus",
 				                pass.c_str(), GetName(s->build_table_idx).c_str(),
 				                GetName(s->probe_table_idx).c_str(), (unsigned long long)ri, (unsigned long long)ro,
 				                sel, (long long)s->probe_time_us.load());

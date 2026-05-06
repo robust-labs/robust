@@ -43,9 +43,9 @@ public:
 	}
 };
 
-class BloomFilterOperation {
+class FilterOperation {
 public:
-	bool is_create; // true = CREATE_BF, false = USE_BF
+	bool is_create; // true = CREATE_FILTER, false = PROBE_FILTER
 	idx_t build_table_idx;
 	idx_t probe_table_idx;
 	vector<ColumnBinding> join_columns;

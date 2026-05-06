@@ -1,7 +1,7 @@
 //===----------------------------------------------------------------------===//
 //                         DuckDB
 //
-// duckdb/planner/operator/logical_create_bf.hpp
+// operator/logical_probe_filter.hpp
 //
 //
 //===----------------------------------------------------------------------===//
@@ -9,40 +9,27 @@
 
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/planner/operator/logical_extension_operator.hpp"
-#include "duckdb/planner/table_filter.hpp"
+#include "logical_create_filter.hpp"
 #include "../optimizer/graph_manager.hpp"
 
 namespace duckdb {
 class DatabaseInstance;
-class PhysicalCreateBF;
-class LogicalUseBF;
+class PhysicalProbeFilter;
 
-class LogicalCreateBF : public LogicalExtensionOperator {
+class LogicalProbeFilter final : public LogicalExtensionOperator {
 public:
 	static constexpr const LogicalOperatorType TYPE = LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR;
-	static constexpr auto OPERATOR_TYPE_NAME = "logical_create_bf";
+	static constexpr auto OPERATOR_TYPE_NAME = "logical_probe_filter";
 
 public:
-	explicit LogicalCreateBF();
-	explicit LogicalCreateBF(const BloomFilterOperation &bf_op);
+	explicit LogicalProbeFilter();
+	explicit LogicalProbeFilter(const FilterOperation &filter_op);
 
-	bool can_stop = false;
-	BloomFilterOperation bf_operation;
-	PhysicalCreateBF *physical = nullptr;
+	FilterOperation filter_operation;
+	LogicalCreateFilter *related_create_filter = nullptr;
+	bool is_passthrough = false;
 
-	vector<LogicalUseBF *> related_use_bf;
-	bool is_forward_pass = false;
-
-	struct DynamicFilterTarget {
-		shared_ptr<DynamicTableFilterSet> dynamic_filters;
-		idx_t scan_column_index;
-		ColumnBinding probe_column;
-		LogicalType column_type;
-		string column_name;
-	};
-	vector<DynamicFilterTarget> pushdown_targets;
-
-	string message;
+	PhysicalProbeFilter *physical = nullptr;
 
 public:
 	string GetExtensionName() const override {
@@ -56,5 +43,7 @@ public:
 protected:
 	void ResolveTypes() override;
 };
+
+// void RegisterLogicalProbeFilterOperatorExtension(DatabaseInstance &instance);
 
 } // namespace duckdb
