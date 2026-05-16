@@ -10,3 +10,20 @@ venv/
 bin/
 lib64
 pyvenv.cfg
+.tmp
+.claude/
+
+results/
+wip_docs/
+temp_scripts/
+benchmark
+duckdb_benchmark_data/
+jobdata/
+tpchdata/
+
+CLAUDE.md
+TODO.md
+
+
+# Custom bf implementation
+src/optimizer/bloom_filter/
