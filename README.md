@@ -1,119 +1,227 @@
 # Robust
 
-A DuckDB extension for robust query optimization through predicate transfer. Built on DuckDB v1.4.4.
+[![CI](https://github.com/robust-labs/robust/actions/workflows/MainDistributionPipeline.yml/badge.svg)](https://github.com/robust-labs/robust/actions/workflows/MainDistributionPipeline.yml)
+[![DuckDB](https://img.shields.io/badge/DuckDB-1.5--rc_(88277463aa)-yellow)](https://github.com/duckdb/duckdb/commit/88277463aa86b998f241a0cd0f87ea647e749576)
+[![extension-ci-tools](https://img.shields.io/badge/extension--ci--tools-v1.4.4_(32eb753d9b)-blue)](https://github.com/duckdb/extension-ci-tools/commit/32eb753d9b660bf90bdca42652cf40c1ef64bf67)
+[![status](https://img.shields.io/badge/status-WIP-orange)](#current-status)
+[![JOB speedup](https://img.shields.io/badge/JOB_geomean-1.76×-brightgreen)](#benchmark-results)
+[![JOB memory](https://img.shields.io/badge/JOB_memory-1.67×_lower-brightgreen)](#benchmark-results)
+
+A DuckDB extension that implements **Robust Predicate Transfer** — a sideways-information-passing technique that propagates bloom filters, min/max ranges, and `IN`-lists across the entire join graph of a multi-join query, then pushes those filters down to the storage layer so probe-side scans skip rows that can't survive downstream joins.
 
 ## Overview
 
-Robust analyzes the join graph of multi-join queries and propagates bloom filters across joins to eliminate unnecessary rows before they ever reach a join operator. In complex queries with many joins, the vast majority of intermediate rows may not survive to the final result. Predicate transfer filters these rows out early, so only a small fraction of the data actually participates in each join.
+In a multi-join query, the vast majority of rows scanned never survive to the final result. Predicate transfer addresses this by building filters from join keys on the build side of each join, then applying those filters (and pushing them to scans) on the probe side. Filters cascade across the join graph: a filter built from the deepest join can prune scans at the leaves.
 
-We invite researchers and practitioners to experiment with this extension to evaluate the performance impact of predicate transfer on real workloads.
+The optimizer walks the join graph, detects equality-join equivalence classes, and inserts `CREATE_FILTER` and `PROBE_FILTER` operators into the physical plan. A second **backward pass** broadcasts each filter across its equivalence class, so filters built on one side of a join also apply to every other table that joins on the same key. Queries return identical results — they just touch dramatically fewer rows.
 
-### How Predicate Transfer Works
+## Benchmark Results
 
-In a multi-join query, tables are joined in sequence. Without predicate transfer, each table's full scan feeds into the join pipeline, even though most rows will be discarded by downstream joins. This wastes I/O, memory, and computation on rows that contribute nothing to the final result.
+Measured on the [Join Order Benchmark](http://www.vldb.org/pvldb/vol9/p204-leis.pdf) (113 queries over IMDb), DuckDB at commit [`88277463aa`](https://github.com/duckdb/duckdb/commit/88277463aa86b998f241a0cd0f87ea647e749576) (post-v1.5-merge on `main`), single machine, 8 threads.
 
-Predicate transfer addresses this by propagating bloom filters across the entire join graph:
+### Per-query speedup (Robust vs baseline DuckDB)
 
-1. **Build bloom filters** from the join keys of smaller tables.
-2. **Apply bloom filters** to larger tables *before* they reach the join, filtering out rows whose keys have no match on the other side.
-3. **Cascade across joins** -- a bloom filter built from one join can filter the input to another join further in the plan, progressively reducing intermediate result sizes.
+![JOB speedup](results/benchmark_results/figures/speedup_join_order.png)
 
-The optimizer walks the join graph and inserts `CREATE_BF` (build) and `USE_BF` (probe) operators into the physical plan. This is transparent to the user -- queries produce the same results, just faster because only the rows that can actually contribute to join matches flow through the pipeline.
+Geometric mean: **1.76× faster**. Best case: **23×** on join-heavy queries (e.g. 07c).
 
-### Bloom Filter Implementation
+### Memory allocated per query (lower is better)
 
-The bloom filter used in this extension is ported from [Apache Arrow Acero's `BlockedBloomFilter`](https://github.com/apache/arrow/blob/main/cpp/src/arrow/acero/bloom_filter.h) (Arrow 21+). All Arrow dependencies have been replaced with DuckDB/stdlib equivalents to produce a self-contained, header-only implementation with no external dependencies. Key properties:
+![Memory ratio](results/benchmark_results/figures/memory_ratio.png)
 
-- **1 cache line access per key** -- single 64-bit block lookup
-- **Pre-generated mask table** -- 1024 masks (57-bit, 4-5 bits set) eliminate per-query mask computation
-- **Memory prefetching** for large filters (>256KB) -- 16 iterations ahead
-- **Folding** for sparse filters -- after building, compresses by OR-ing halves until >25% density, reducing memory footprint for selective joins
-- **8 bits per key** -- compact and cache-friendly
-- **Atomic inserts** (`fetch_or`) for thread-safe parallel building
+Geometric mean of `baseline_memory / robust_memory`: **1.67×**. Robust uses less memory on 100/113 queries; large reductions concentrated in queries with cardinality-explosive intermediate joins.
+
+### Hash-join input cardinality (probe-side rows reaching HJs)
+
+![HJ cardinality sum](results/benchmark_results/figures/hj_card_sum_pairs_line.png)
+
+Sum of `operator_cardinality` across all `HASH_JOIN` operators in the plan — measures how many rows the optimizer's chosen plan actually pushes into joins. Robust reduces this metric by **8× on the hardest queries** by filtering probe-side rows out at the scan, before they reach the hash table.
+
+[All figures](results/benchmark_results/figures/) (PDF + PNG) are regenerated by `scripts/plot_results.py` from `results/benchmark_results/metrics.csv`.
 
 ## Building
 
 ### Prerequisites
 
 ```bash
+git clone --recurse-submodules https://github.com/robust-labs/robust.git
+cd robust
+
 git clone https://github.com/Microsoft/vcpkg.git
 ./vcpkg/bootstrap-vcpkg.sh
-export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
+export VCPKG_TOOLCHAIN_PATH=$(pwd)/vcpkg/scripts/buildsystems/vcpkg.cmake
 ```
 
 ### Build
 
 ```bash
-# release build
+# release
 GEN=ninja make release
 
-# debug build (includes AddressSanitizer)
+# debug (AddressSanitizer enabled)
 GEN=ninja make debug
+
+# release + benchmark runner (needed for run_bench_compare.sh)
+BUILD_BENCHMARK=1 GEN=ninja make release
 ```
 
-Build artifacts:
-- `./build/release/duckdb` -- DuckDB shell
-- `./build/release/extension/rpt/rpt.duckdb_extension` -- loadable extension
+### Build artifacts
+
+- `./build/release/duckdb` — DuckDB shell
+- `./build/release/extension/robust/robust.duckdb_extension` — loadable extension
+- `./build/release/benchmark/benchmark_runner` — benchmark runner (only with `BUILD_BENCHMARK=1`)
 
 ## Running
 
-The extension is not yet published to the DuckDB extension repository, so it must be loaded as an unsigned extension:
+The extension is not published to the DuckDB extension repository, so it must be loaded as an unsigned extension:
 
 ```bash
 ./build/release/duckdb -unsigned
 ```
 
 ```sql
-LOAD 'build/release/extension/rpt/rpt.duckdb_extension';
+LOAD 'build/release/extension/robust/robust.duckdb_extension';
 
--- create test tables
+-- correctness check
 CREATE TEMP TABLE t1 AS SELECT i AS id FROM range(100000) tbl(i);
-CREATE TEMP TABLE t2 AS SELECT i AS id FROM range(50000) tbl(i);
+CREATE TEMP TABLE t2 AS SELECT i AS id FROM range(50000)  tbl(i);
+SELECT count(*) FROM t1 JOIN t2 ON t1.id = t2.id;          -- returns 50000
 
--- verify correctness
-SELECT count(*) FROM t1 JOIN t2 ON t1.id = t2.id;
--- returns 50000
-
--- inspect the optimized plan (look for CREATE_BF and USE_BF operators)
+-- inspect the rewritten plan (look for CREATE_FILTER / PROBE_FILTER)
 EXPLAIN SELECT * FROM t1 JOIN t2 ON t1.id = t2.id;
+```
+
+### Settings
+
+```sql
+SET robust_heuristic = 'largest_root';   -- default: pick largest table as root of DAG
+SET robust_heuristic = 'join_order';     -- alternative: respect DuckDB's join enumerator
+SET robust_pass_mode = 'forward';        -- forward-only (skip backward broadcast)
+SET robust_pass_mode = 'both';           -- default: forward + backward
+PRAGMA robust_profiling = 1;             -- emit per-operator filter stats in profile output
 ```
 
 ## Benchmarks (JOB)
 
-The repository includes a benchmark script that runs all 113 [Join Order Benchmark](http://www.vldb.org/pvldb/vol9/p204-leis.pdf) queries with and without the extension, compares result correctness, and reports per-query timing and geometric mean speedup.
-
 ### Setup
 
-1. Build the extension (see above).
-2. Load the JOB dataset into `jobdata/job.duckdb` (the script expects this path).
-
-### Running
-
 ```bash
-# correctness only
-./test_job_queries.sh
-
-# with timing (single run per query)
-./test_job_queries.sh --timing
-
-# with timing (minimum of 3 runs per query, for more stable numbers)
-./test_job_queries.sh --timing --runs 3
-
-# test a specific query
-./test_job_queries.sh --query 1a --timing
-
-# test first N queries
-./test_job_queries.sh --timing --limit 10
+# expects jobdata/job.duckdb (load JOB tables via your tool of choice)
+ls jobdata/job.duckdb
+ls jobdata/queries/1a.sql    # 113 queries
 ```
 
-The script generates a baseline (without the extension) on first run, then compares results and timing against the extension-enabled run. A summary is saved to `job_test_results/summary.txt`.
+### Correctness + wall-clock comparison
 
-## Current Status
+`./test_job_queries.sh` runs every JOB query with and without the extension, diffs results, and reports per-query timing + geomean speedup.
 
-- Predicate transfer working for multi-join queries with equality join conditions
-- Parallel bloom filter build/probe integrated into DuckDB's pipeline execution
-- Correctness verified on the full JOB benchmark (113 queries)
+```bash
+./test_job_queries.sh                          # correctness only
+./test_job_queries.sh --timing                 # single run
+./test_job_queries.sh --timing --runs 3        # min of 3 runs (more stable)
+./test_job_queries.sh --query 7c --timing      # one query
+./test_job_queries.sh --timing --limit 10      # first N queries
+```
+
+Summary written to `job_test_results/summary.txt`.
+
+### DuckDB benchmark-runner suites
+
+`scripts/run_bench_compare.sh` drives the in-tree DuckDB benchmark runner against the `imdb` (baseline) and `imdb_robust*` (extension) suites and writes a side-by-side comparison.
+
+```bash
+# all 113 queries, baseline + Robust, min of repeated runs
+./scripts/run_bench_compare.sh
+
+# subset
+./scripts/run_bench_compare.sh --pattern '07.*'
+
+# Robust with the join_order heuristic (vs baseline)
+./scripts/run_bench_compare.sh --heuristic join_order
+
+# Robust forward-only (no backward equivalence-class broadcast)
+./scripts/run_bench_compare.sh --forward-only
+
+# re-aggregate already-collected raw results without re-running
+./scripts/run_bench_compare.sh --no-run
+
+# run Robust suite first (default is baseline first; flips the order to control thermals)
+./scripts/run_bench_compare.sh --robust-first
+```
+
+Output: `benchmark_results/{baseline_raw.tsv, robust_raw.tsv, comparison.tsv}`.
+
+### Per-query profiling
+
+`scripts/profile_query.sh` runs a single query under both baseline and Robust, captures DuckDB's JSON profile, and prints a breakdown by operator class (HASH_JOIN, SEQ_SCAN, CREATE_FILTER, PROBE_FILTER, ...).
+
+```bash
+# JOB query 7c
+./scripts/profile_query.sh 7c
+
+# TPCH query 3
+./scripts/profile_query.sh --workload tpch 3
+
+# disable DuckDB's join_filter_pushdown for Robust (isolates Robust's contribution)
+./scripts/profile_query.sh --no-jfp robust 7c
+
+# compare both Robust heuristics against baseline
+./scripts/profile_query.sh --heuristic all 7c
+
+# inline SQL
+./scripts/profile_query.sh --sql "SELECT count(*) FROM t1 JOIN t2 ON t1.id = t2.id"
+```
+
+### Full metrics sweep + plotting
+
+`scripts/bench_metrics.sh` sweeps all JOB queries and extracts six metrics from each profile JSON (memory allocated, rows scanned, cumulative cardinality, peak buffer, sum/max of HASH_JOIN cardinality). `scripts/plot_results.py` consumes the resulting CSV and emits the figures in `results/benchmark_results/figures/`.
+
+```bash
+./scripts/bench_metrics.sh                      # all queries → benchmark_results/metrics.csv
+./scripts/bench_metrics.sh --pattern '13.*'     # subset
+./scripts/bench_metrics.sh --query 13a          # single query
+
+./scripts/plot_results.py speedup benchmark_results/comparison.tsv --out fig.pdf
+./scripts/plot_results.py metric memory benchmark_results/metrics.csv --out memory_ratio.pdf
+./scripts/plot_results.py pairs hj_card_sum benchmark_results/metrics.csv \
+    --style line --out hj_card_sum_pairs_line.pdf
+```
+
+## How predicate transfer works
+
+1. **Build DAG.** The optimizer extracts equality joins, builds equivalence classes over join columns (union-find), and constructs a DAG over base tables with filtered tables as roots.
+2. **Forward pass (leaves → root).** For each edge, the smaller side builds a filter (bloom filter + min/max + optional `IN`-list when the build side has few distinct values). The filter is applied to the larger side via a `PROBE_FILTER` operator inserted above the scan.
+3. **Backward pass (root → leaves).** Each filter is broadcast across its equivalence class. If tables A, B, C all join on the same key and a filter was built from C, it's pushed to A and B as well — even though they never directly joined with C.
+4. **Scan pushdown.** Built filters are pushed into DuckDB's `dynamic_filters` infrastructure via `BFTableFilter` + `SelectivityOptionalFilter`, so the storage layer can skip rows/segments before they're decompressed.
+
+The backward pass is the load-bearing mechanism — it's the difference between baseline-equivalent forward-only performance and the 23× wins on cardinality-explosive queries.
+
+## Bloom filter implementation
+
+The extension uses DuckDB's native [`BloomFilter`](duckdb/src/include/duckdb/planner/filter/bloom_filter.hpp) (`duckdb/planner/filter/bloom_filter.hpp`) as the underlying implementation:
+
+- 12 bits per key
+- `InsertHashes` uses atomic `fetch_or` for lock-free parallel building
+- `LookupHashes` returns a `SelectionVector` directly (no separate bit-vector pass)
+
+`src/include/bloom_filter.hpp` defines a thin wrapper, `PTBloomFilter`, which adds the glue DuckDB's native API doesn't provide:
+
+- `Insert(DataChunk&, cols)` and `LookupSel(DataChunk&, sel, cols, buf)` — hashes are computed from the chunk via `VectorOperations::Hash` + `CombineHash` before being passed to the native filter.
+- `ReinitializeAndRehash(actual_rows, data, cols)` — resizes the filter once the true build-side row count is known.
+- `IsEmpty()` / `finalized_` — lifecycle flags read by `PhysicalProbeFilter`.
+
+The bloom filter is one of three filter types pushed in a single `CREATE_FILTER` operation; min/max bounds and `IN`-lists (when the build side has ≤ 50 distinct keys) are emitted alongside it via DuckDB's `ConstantFilter` / `InFilter` infrastructure.
+
+## Pinned dependencies
+
+| Dependency | Pin | Notes |
+|---|---|---|
+| `duckdb` submodule | [`88277463aa`](https://github.com/duckdb/duckdb/commit/88277463aa86b998f241a0cd0f87ea647e749576) | Merge commit "Merge V1.5 -> Main", 2026-02-23. Not a release tag. |
+| `extension-ci-tools` submodule | [`32eb753d9b`](https://github.com/duckdb/extension-ci-tools/commit/32eb753d9b660bf90bdca42652cf40c1ef64bf67) | `v1.4.4` branch tip |
+| OpenSSL | 3.5.3+ via vcpkg | dependency of DuckDB build |
+
+CI pins are kept in sync with submodule pins in [`.github/workflows/MainDistributionPipeline.yml`](.github/workflows/MainDistributionPipeline.yml).
 
 ## License
 
-This project is based on the [DuckDB Extension Template](https://github.com/duckdb/extension-template). The bloom filter implementation is ported from [Apache Arrow](https://github.com/apache/arrow) (Apache License 2.0).
+Based on the [DuckDB Extension Template](https://github.com/duckdb/extension-template) (MIT).
