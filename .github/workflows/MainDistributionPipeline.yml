@@ -16,15 +16,15 @@ jobs:
     name: Build extension binaries
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     with:
-      duckdb_version: main
-      ci_tools_version: main
-      extension_name: rpt
+      duckdb_version: 88277463aa86b998f241a0cd0f87ea647e749576
+      ci_tools_version: 32eb753d9b660bf90bdca42652cf40c1ef64bf67
+      extension_name: robust
 
   code-quality-check:
     name: Code Quality Check
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@main
     with:
-      duckdb_version: main
-      ci_tools_version: main
-      extension_name: rpt
+      duckdb_version: 88277463aa86b998f241a0cd0f87ea647e749576
+      ci_tools_version: 32eb753d9b660bf90bdca42652cf40c1ef64bf67
+      extension_name: robust
       format_checks: 'format;tidy'
