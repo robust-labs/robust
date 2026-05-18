@@ -1599,7 +1599,7 @@ unique_ptr<LogicalOperator> RobustOptimizerContextState::Optimize(unique_ptr<Log
 
 	// determine heuristic
 	Value heuristic_val;
-	string heuristic = "largest_root";
+	string heuristic = "join_order";
 	if (context.TryGetCurrentSetting("robust_heuristic", heuristic_val)) {
 		heuristic = heuristic_val.GetValue<string>();
 	}
@@ -1631,7 +1631,7 @@ unique_ptr<LogicalOperator> RobustOptimizerContextState::Optimize(unique_ptr<Log
 		forward_filter_ops = std::move(filter_ops.first);
 		backward_filter_ops = std::move(filter_ops.second);
 	} else {
-		// default: largest_root
+		// largest_root
 		mst_edges = LargestRoot(edges);
 		auto filter_ops = GenerateStageModifications(mst_edges);
 		forward_filter_ops = std::move(filter_ops.first);

@@ -63,8 +63,8 @@ static void LoadInternal(ExtensionLoader &loader) {
 	config.AddExtensionOption("robust_filter_type", "Filter type for scan pushdown: all, bf_only, minmax_only",
 	                          LogicalType::VARCHAR, Value("all"));
 	config.AddExtensionOption("robust_pass_mode", "Pass mode: both, forward_only", LogicalType::VARCHAR, Value("both"));
-	config.AddExtensionOption("robust_heuristic", "Heuristic for BF transfer: largest_root, join_order",
-	                          LogicalType::VARCHAR, Value("largest_root"));
+	config.AddExtensionOption("robust_heuristic", "Heuristic for BF transfer: join_order (default), largest_root",
+	                          LogicalType::VARCHAR, Value("join_order"));
 	config.AddExtensionOption("robust_flip_roots", "Flip non-largest roots to leaves in join_order DAG",
 	                          LogicalType::BOOLEAN, Value::BOOLEAN(true));
 	config.AddExtensionOption("robust_dynamic_or_filter_threshold",

@@ -7,7 +7,7 @@
 #   --robust-only        Run only Robust benchmarks
 #   --no-run          Skip running, just compare existing results
 #   --forward-only    Use forward-only pass mode for Robust
-#   --heuristic <name> Robust heuristic: largest_root (default), join_order
+#   --heuristic <name> Robust heuristic: join_order (default), largest_root
 #   --out <dir>       Output directory (default: benchmark_results)
 #   --metric <m>      Aggregation metric across runs: min (default), geomean
 #   --robust-first    Run Robust suite before baseline (default: baseline first)
@@ -63,15 +63,15 @@ run_baseline() {
 
 run_robust() {
     if [ "$RUN_ROBUST" = true ]; then
-        if [ "$HEURISTIC" = "join_order" ]; then
-            ROBUST_SUITE="imdb_robust_jo"
-            echo "Running Robust join_order benchmarks (pattern: $PATTERN)..."
+        if [ "$HEURISTIC" = "largest_root" ]; then
+            ROBUST_SUITE="imdb_robust"
+            echo "Running Robust largest_root benchmarks (pattern: $PATTERN)..."
         elif [ "$FORWARD_ONLY" = true ]; then
             ROBUST_SUITE="imdb_robust_fwd"
             echo "Running Robust forward-only benchmarks (pattern: $PATTERN)..."
         else
-            ROBUST_SUITE="imdb_robust"
-            echo "Running Robust benchmarks (pattern: $PATTERN)..."
+            ROBUST_SUITE="imdb_robust_jo"
+            echo "Running Robust join_order benchmarks (pattern: $PATTERN)..."
         fi
         "$RUNNER" "benchmark/${ROBUST_SUITE}/$PATTERN" 2>&1 | tee "$ROBUST_RAW"
         echo "Robust done."

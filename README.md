@@ -94,8 +94,8 @@ EXPLAIN SELECT * FROM t1 JOIN t2 ON t1.id = t2.id;
 ### Settings
 
 ```sql
-SET robust_heuristic = 'largest_root';   -- default: pick largest table as root of DAG
-SET robust_heuristic = 'join_order';     -- alternative: respect DuckDB's join enumerator
+SET robust_heuristic = 'join_order';     -- default: respect DuckDB's join enumerator
+SET robust_heuristic = 'largest_root';   -- alternative: pick largest table as root of DAG
 SET robust_pass_mode = 'forward';        -- forward-only (skip backward broadcast)
 SET robust_pass_mode = 'both';           -- default: forward + backward
 PRAGMA robust_profiling = 1;             -- emit per-operator filter stats in profile output
@@ -136,8 +136,8 @@ Summary written to `job_test_results/summary.txt`.
 # subset
 ./scripts/run_bench_compare.sh --pattern '07.*'
 
-# Robust with the join_order heuristic (vs baseline)
-./scripts/run_bench_compare.sh --heuristic join_order
+# Robust with the largest_root heuristic (vs baseline)
+./scripts/run_bench_compare.sh --heuristic largest_root
 
 # Robust forward-only (no backward equivalence-class broadcast)
 ./scripts/run_bench_compare.sh --forward-only
