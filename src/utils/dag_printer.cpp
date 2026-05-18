@@ -394,8 +394,7 @@ void PrintPhysicalDAG(vector<PhysicalDAGNode *> &all_nodes, TableManager &table_
 						if (ci > 0) {
 							label += ", ";
 						}
-						label += table_mgr.GetColumnName(edge.parent_table, edge.parent_cols[ci].column_index) +
-						         " / " +
+						label += table_mgr.GetColumnName(edge.parent_table, edge.parent_cols[ci].column_index) + " / " +
 						         table_mgr.GetColumnName(edge.child_table, edge.child_cols[ci].column_index);
 					}
 					info.edge_labels.push_back(label);

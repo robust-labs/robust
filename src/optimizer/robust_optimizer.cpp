@@ -42,7 +42,8 @@ vector<JoinEdge> RobustOptimizerContextState::ExtractOperators(LogicalOperator &
 	return CreateJoinEdges(join_ops);
 }
 
-void RobustOptimizerContextState::ExtractOperatorsRecursive(LogicalOperator &plan, vector<LogicalOperator *> &join_ops) {
+void RobustOptimizerContextState::ExtractOperatorsRecursive(LogicalOperator &plan,
+                                                            vector<LogicalOperator *> &join_ops) {
 	LogicalOperator *op = &plan;
 
 	// step 1: collect all join operators
@@ -422,7 +423,7 @@ void RobustOptimizerContextState::DebugPrintGraph(const vector<JoinEdge> &edges)
 }
 
 void RobustOptimizerContextState::DebugPrintMST(const vector<JoinEdge> &mst_edges,
-                                             const vector<FilterOperation> &filter_operations) {
+                                                const vector<FilterOperation> &filter_operations) {
 	(void)mst_edges;
 	(void)filter_operations;
 #ifdef DEBUG
@@ -440,7 +441,8 @@ void RobustOptimizerContextState::DebugPrintMST(const vector<JoinEdge> &mst_edge
 
 		if (filter_op.is_create) {
 			// CREATE operation
-			Printer::PrintF("Filter Op %zu: CREATE_FILTER on table %llu", i, (unsigned long long)filter_op.build_table_idx);
+			Printer::PrintF("Filter Op %zu: CREATE_FILTER on table %llu", i,
+			                (unsigned long long)filter_op.build_table_idx);
 			string cols = "  Build columns: ";
 			for (const auto &col : filter_op.build_columns) {
 				cols += "(" + std::to_string(col.table_index) + "." + std::to_string(col.column_index) + ") ";
@@ -449,7 +451,8 @@ void RobustOptimizerContextState::DebugPrintMST(const vector<JoinEdge> &mst_edge
 		} else {
 			// USE operation
 			Printer::PrintF("Filter Op %zu: PROBE_FILTER on table %llu (using BF from table %llu)", i,
-			                (unsigned long long)filter_op.probe_table_idx, (unsigned long long)filter_op.build_table_idx);
+			                (unsigned long long)filter_op.probe_table_idx,
+			                (unsigned long long)filter_op.build_table_idx);
 			string build_cols = "  Build columns: ";
 			for (const auto &col : filter_op.build_columns) {
 				build_cols += "(" + std::to_string(col.table_index) + "." + std::to_string(col.column_index) + ") ";
@@ -523,12 +526,12 @@ static void PhysicalDAGDFS(LogicalOperator *op, TableManager &table_mgr, RobustO
 	// base case: registered base table
 	auto *info = table_mgr.GetTableInfo(op);
 	if (info) {
-		bool is_leaf = (op->type == LogicalOperatorType::LOGICAL_GET ||
-		                op->type == LogicalOperatorType::LOGICAL_DUMMY_SCAN ||
-		                op->type == LogicalOperatorType::LOGICAL_EXPRESSION_GET ||
-		                op->type == LogicalOperatorType::LOGICAL_DELIM_GET ||
-		                op->type == LogicalOperatorType::LOGICAL_EMPTY_RESULT ||
-		                op->type == LogicalOperatorType::LOGICAL_CHUNK_GET);
+		bool is_leaf =
+		    (op->type == LogicalOperatorType::LOGICAL_GET || op->type == LogicalOperatorType::LOGICAL_DUMMY_SCAN ||
+		     op->type == LogicalOperatorType::LOGICAL_EXPRESSION_GET ||
+		     op->type == LogicalOperatorType::LOGICAL_DELIM_GET ||
+		     op->type == LogicalOperatorType::LOGICAL_EMPTY_RESULT ||
+		     op->type == LogicalOperatorType::LOGICAL_CHUNK_GET);
 		if (is_leaf) {
 			auto *node = new PhysicalDAGNode(info->table_idx, info->table_op);
 			all_nodes.push_back(node);
@@ -672,7 +675,7 @@ static void PhysicalDAGDFS(LogicalOperator *op, TableManager &table_mgr, RobustO
 }
 
 vector<PhysicalDAGNode *> RobustOptimizerContextState::BuildPhysicalPlanDAG(LogicalOperator *op,
-                                                                        map<ColKey, ColKey> &uf_parent) {
+                                                                            map<ColKey, ColKey> &uf_parent) {
 	vector<PhysicalDAGNode *> all_nodes;
 	map<idx_t, PhysicalDAGNode *> node_map;
 	map<idx_t, int> dfs_index;
@@ -997,7 +1000,7 @@ RobustOptimizerContextState::GenerateStageModifications(const vector<JoinEdge> &
 std::pair<unordered_map<LogicalOperator *, vector<FilterOperation>>,
           unordered_map<LogicalOperator *, vector<FilterOperation>>>
 RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDAGNode *> &all_nodes,
-                                                            map<ColKey, ColKey> &uf_parent) {
+                                                               map<ColKey, ColKey> &uf_parent) {
 	unordered_map<LogicalOperator *, vector<FilterOperation>> forward_filter_ops;
 	unordered_map<LogicalOperator *, vector<FilterOperation>> backward_filter_ops;
 
@@ -1112,9 +1115,9 @@ RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDA
 					auto &create_op = backward_filter_ops[source.build_table_op][source.create_op_index];
 					for (idx_t ci = 0; ci < edge.child_cols.size(); ci++) {
 						create_op.probe_columns.push_back(edge.child_cols[ci]);
-						create_op.build_columns.push_back(source.build_columns[ci < source.build_columns.size()
-						                                                            ? ci
-						                                                            : source.build_columns.size() - 1]);
+						create_op.build_columns.push_back(
+						    source.build_columns[ci < source.build_columns.size() ? ci
+						                                                          : source.build_columns.size() - 1]);
 					}
 
 					FilterOperation use_op;
@@ -1151,8 +1154,8 @@ RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDA
 					backward_filter_ops[child_node->table_op].push_back(use_op);
 
 					// record this as the source for this equivalence class
-					equiv_class_bf_source[equiv_root] = {parent_node->table_op, create_idx,
-					                                     parent_node->table_idx, edge.parent_cols};
+					equiv_class_bf_source[equiv_root] = {parent_node->table_op, create_idx, parent_node->table_idx,
+					                                     edge.parent_cols};
 				}
 			}
 		}
@@ -1163,7 +1166,7 @@ RobustOptimizerContextState::GenerateStageModificationsFromDAG(vector<PhysicalDA
 
 unique_ptr<LogicalOperator>
 RobustOptimizerContextState::BuildStackedBFOperators(unique_ptr<LogicalOperator> base_plan,
-                                                  const vector<FilterOperation> &filter_ops, bool reverse_order) {
+                                                     const vector<FilterOperation> &filter_ops, bool reverse_order) {
 	if (filter_ops.empty()) {
 		return base_plan;
 	}
@@ -1181,7 +1184,8 @@ RobustOptimizerContextState::BuildStackedBFOperators(unique_ptr<LogicalOperator>
 
 			// Look ahead for consecutive CREATEs on the same table
 			size_t j = i + 1;
-			while (j < filter_ops.size() && filter_ops[j].is_create && filter_ops[j].build_table_idx == filter_op.build_table_idx) {
+			while (j < filter_ops.size() && filter_ops[j].is_create &&
+			       filter_ops[j].build_table_idx == filter_op.build_table_idx) {
 				consecutive_creates.push_back(filter_ops[j]);
 				j++;
 			}
@@ -1198,8 +1202,8 @@ RobustOptimizerContextState::BuildStackedBFOperators(unique_ptr<LogicalOperator>
 				for (const auto &op : consecutive_creates) {
 					// for (const auto &col : op.build_columns) {
 					for (idx_t x = 0; x < op.build_columns.size(); x++) {
-						// __assert(op.build_columns.size() == op.probe_columns.size(),"Merging consecutive CREATE_FILTERs:
-						// Build columns and probe columns size different");
+						// __assert(op.build_columns.size() == op.probe_columns.size(),"Merging consecutive
+						// CREATE_FILTERs: Build columns and probe columns size different");
 						merged_op.build_columns.push_back(op.build_columns[x]);
 						merged_op.probe_columns.push_back(op.probe_columns[x]);
 					}
@@ -1386,8 +1390,9 @@ void RobustOptimizerContextState::LinkProbeFilterToCreateFilter(LogicalOperator 
 						         (unsigned long long)build_table_idx, (unsigned long long)probe_table_idx);
 					}
 				} else {
-					D_PRINTF("[LINK] WARNING: No CREATE_FILTER found for PROBE_FILTER (build=table_%llu, probe=table_%llu)",
-					         (unsigned long long)build_table_idx, (unsigned long long)probe_table_idx);
+					D_PRINTF(
+					    "[LINK] WARNING: No CREATE_FILTER found for PROBE_FILTER (build=table_%llu, probe=table_%llu)",
+					    (unsigned long long)build_table_idx, (unsigned long long)probe_table_idx);
 				}
 			}
 		}
@@ -1431,7 +1436,8 @@ void RobustOptimizerContextState::SetupDynamicFilterPushdown(LogicalOperator *pl
 	// for each forward-pass CREATE_FILTER, set up pushdown targets
 	for (auto *create_filter : forward_creates) {
 		D_PRINTF("[PUSHDOWN-SETUP] CREATE_FILTER build=table_%llu, related_probe_filter=%zu",
-		         (unsigned long long)create_filter->filter_operation.build_table_idx, create_filter->related_probe_filter.size());
+		         (unsigned long long)create_filter->filter_operation.build_table_idx,
+		         create_filter->related_probe_filter.size());
 		for (auto *probe_filter : create_filter->related_probe_filter) {
 			if (!probe_filter->filter_operation.is_forward_pass) {
 				D_PRINTF("[PUSHDOWN-SETUP]   skipping PROBE_FILTER probe=table_%llu (not forward)",
@@ -1493,9 +1499,10 @@ void RobustOptimizerContextState::SetupDynamicFilterPushdown(LogicalOperator *pl
 			// mark PROBE_FILTER as passthrough since filters are pushed to scan
 			probe_filter->is_passthrough = true;
 
-			D_PRINTF("[PUSHDOWN] forward CREATE_FILTER (build=table_%llu) -> PROBE_FILTER (probe=table_%llu) pushed %zu targets",
-			         (unsigned long long)create_filter->filter_operation.build_table_idx, (unsigned long long)probe_table_idx,
-			         create_filter->pushdown_targets.size());
+			D_PRINTF("[PUSHDOWN] forward CREATE_FILTER (build=table_%llu) -> PROBE_FILTER (probe=table_%llu) pushed "
+			         "%zu targets",
+			         (unsigned long long)create_filter->filter_operation.build_table_idx,
+			         (unsigned long long)probe_table_idx, create_filter->pushdown_targets.size());
 		}
 	}
 }
@@ -1504,7 +1511,8 @@ void RobustOptimizerContextState::SetupDynamicFilterPushdown(LogicalOperator *pl
 static LogicalOperator *FindDeepestCreateFilter(LogicalOperator *node) {
 	LogicalOperator *deepest = nullptr;
 	while (node) {
-		if (node->type == LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR && dynamic_cast<LogicalCreateFilter *>(node)) {
+		if (node->type == LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR &&
+		    dynamic_cast<LogicalCreateFilter *>(node)) {
 			deepest = node;
 		}
 		if (node->children.empty()) {
@@ -1693,8 +1701,8 @@ unique_ptr<LogicalOperator> RobustOptimizerContextState::Optimize(unique_ptr<Log
 // }
 
 void RobustOptimizerContextState::PreOptimize(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
-	auto optimizer_state =
-	    input.context.registered_state->GetOrCreate<RobustOptimizerContextState>("robust_optimizer_state", input.context);
+	auto optimizer_state = input.context.registered_state->GetOrCreate<RobustOptimizerContextState>(
+	    "robust_optimizer_state", input.context);
 
 	plan = optimizer_state->PreOptimize(std::move(plan));
 }
@@ -1703,8 +1711,8 @@ void RobustOptimizerContextState::Optimize(OptimizerExtensionInput &input, uniqu
 	auto profiling = GetRobustProfilingState(input.context);
 	auto opt_start = std::chrono::high_resolution_clock::now();
 
-	const auto optimizer_state =
-	    input.context.registered_state->GetOrCreate<RobustOptimizerContextState>("robust_optimizer_state", input.context);
+	const auto optimizer_state = input.context.registered_state->GetOrCreate<RobustOptimizerContextState>(
+	    "robust_optimizer_state", input.context);
 	plan = optimizer_state->Optimize(std::move(plan));
 
 	if (profiling) {

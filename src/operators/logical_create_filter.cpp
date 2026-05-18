@@ -14,7 +14,8 @@ LogicalCreateFilter::LogicalCreateFilter() : LogicalExtensionOperator() {
 	message = "CREATE_FILTER";
 }
 
-LogicalCreateFilter::LogicalCreateFilter(const FilterOperation &filter_op) : LogicalExtensionOperator(), filter_operation(filter_op) {
+LogicalCreateFilter::LogicalCreateFilter(const FilterOperation &filter_op)
+    : LogicalExtensionOperator(), filter_operation(filter_op) {
 	this->type = LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR;
 	message = "CREATE_FILTER";
 }
@@ -95,8 +96,8 @@ PhysicalOperator &LogicalCreateFilter::CreatePlan(ClientContext &context, Physic
 		PhysicalOperator &physical_op = generator.Make<PhysicalCreateFilter>(
 		    make_shared_ptr<FilterOperation>(filter_operation), types, estimated_cardinality, resolved_indices);
 		// auto filter_plan = FilterOperationToFilterPlan(filter_operation);
-		// auto &physical_op = generator.Make<PhysicalCreateFilter>(make_shared<FilterOperation>(filter_operation), types,
-		// estimated_cardinality);
+		// auto &physical_op = generator.Make<PhysicalCreateFilter>(make_shared<FilterOperation>(filter_operation),
+		// types, estimated_cardinality);
 		for (auto &child : children) {
 			auto &child_physical = generator.CreatePlan(*child);
 			physical_op.children.emplace_back(child_physical);
@@ -119,8 +120,8 @@ PhysicalOperator &LogicalCreateFilter::CreatePlan(ClientContext &context, Physic
 		// the links are used to create pipeline dependencies
 		for (const LogicalProbeFilter *probe_filter : related_probe_filter) {
 			if (probe_filter->physical) {
-				// TODO: keep either related_create_filter or related_create_filter_vec. Not both. Most likely we'll have to
-				// remove related_create_filter.
+				// TODO: keep either related_create_filter or related_create_filter_vec. Not both. Most likely we'll
+				// have to remove related_create_filter.
 				probe_filter->physical->related_create_filter = physical;
 				probe_filter->physical->related_create_filter_vec.push_back(physical);
 			}

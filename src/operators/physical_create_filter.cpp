@@ -16,11 +16,13 @@
 
 namespace duckdb {
 
-PhysicalCreateFilter::PhysicalCreateFilter(PhysicalPlan &physical_plan, const shared_ptr<FilterOperation> filter_operation,
-                                   vector<LogicalType> types, idx_t estimated_cardinality,
-                                   vector<idx_t> bound_column_indices)
+PhysicalCreateFilter::PhysicalCreateFilter(PhysicalPlan &physical_plan,
+                                           const shared_ptr<FilterOperation> filter_operation,
+                                           vector<LogicalType> types, idx_t estimated_cardinality,
+                                           vector<idx_t> bound_column_indices)
     : PhysicalOperator(physical_plan, PhysicalOperatorType::EXTENSION, std::move(types), estimated_cardinality),
-      filter_operation(filter_operation), is_probing_side(false), bound_column_indices(std::move(bound_column_indices)) {
+      filter_operation(filter_operation), is_probing_side(false),
+      bound_column_indices(std::move(bound_column_indices)) {
 	// create bloom filter for each build column, keyed by ColumnBinding
 	for (size_t i = 0; i < filter_operation->build_columns.size(); i++) {
 		const auto &col = filter_operation->build_columns[i];
@@ -183,7 +185,8 @@ static void UpdateMinMax(Vector &vec, idx_t count, ColumnMinMax &mm) {
 // Sink
 //===--------------------------------------------------------------------===//
 
-CreateFilterGlobalSinkState::CreateFilterGlobalSinkState(ClientContext &context, const PhysicalCreateFilter &op) : op(op) {
+CreateFilterGlobalSinkState::CreateFilterGlobalSinkState(ClientContext &context, const PhysicalCreateFilter &op)
+    : op(op) {
 	total_data = make_uniq<ColumnDataCollection>(context, op.types);
 	// initialize bloom filters upfront so Sink can insert directly
 	for (auto &entry : op.bloom_filter_map) {
@@ -220,8 +223,9 @@ SinkResultType PhysicalCreateFilter::Sink(ExecutionContext &context, DataChunk &
 		profiling_checked = true;
 		auto prof = GetRobustProfilingState(context.client);
 		if (prof) {
-			profiling_stats = prof->RegisterCreateFilter(filter_operation->build_table_idx, filter_operation->probe_columns,
-			                                         filter_operation->sequence_number, is_forward_pass);
+			profiling_stats =
+			    prof->RegisterCreateFilter(filter_operation->build_table_idx, filter_operation->probe_columns,
+			                               filter_operation->sequence_number, is_forward_pass);
 		}
 	}
 
@@ -425,9 +429,7 @@ static void PushDynamicFilters(const PhysicalCreateFilter &op, const CreateFilte
 				if (bf_it != op.bloom_filter_map.end() && bf_it->second && !bf_it->second->IsEmpty()) {
 					auto bf_filter = make_uniq<BFTableFilter>(bf_it->second->GetNativeFilter(), false,
 					                                          target.column_name, target.column_type);
-					auto wrapped = make_uniq<SelectivityOptionalFilter>(std::move(bf_filter),
-					                                                    1,
-					                                                    1000000);
+					auto wrapped = make_uniq<SelectivityOptionalFilter>(std::move(bf_filter), 1, 1000000);
 					target.dynamic_filters->PushFilter(op, target.scan_column_index, std::move(wrapped));
 					D_PRINTF("[PUSHDOWN] pushed BF for col %s to scan col %llu", target.column_name.c_str(),
 					         (unsigned long long)target.scan_column_index);
@@ -435,8 +437,7 @@ static void PushDynamicFilters(const PhysicalCreateFilter &op, const CreateFilte
 			}
 
 			// equality filter already expresses min/max; skip min/max push in that case
-			if (push_minmax && !pushed_equal && i < gsink.column_min_max.size() &&
-			    gsink.column_min_max[i].has_value) {
+			if (push_minmax && !pushed_equal && i < gsink.column_min_max.size() && gsink.column_min_max[i].has_value) {
 				auto &mm = gsink.column_min_max[i];
 				auto min_filter = make_uniq<ConstantFilter>(ExpressionType::COMPARE_GREATERTHANOREQUALTO, mm.min_val);
 				target.dynamic_filters->PushFilter(op, target.scan_column_index, std::move(min_filter));
@@ -454,14 +455,15 @@ static void PushDynamicFilters(const PhysicalCreateFilter &op, const CreateFilte
 }
 
 SinkFinalizeType PhysicalCreateFilter::Finalize(Pipeline &pipeline, Event &event, ClientContext &context,
-                                            OperatorSinkFinalizeInput &input) const {
+                                                OperatorSinkFinalizeInput &input) const {
 	// lazy init profiling if Sink was never called (e.g., empty input)
 	if (!profiling_checked) {
 		profiling_checked = true;
 		auto prof = GetRobustProfilingState(context);
 		if (prof) {
-			profiling_stats = prof->RegisterCreateFilter(filter_operation->build_table_idx, filter_operation->probe_columns,
-			                                         filter_operation->sequence_number, is_forward_pass);
+			profiling_stats =
+			    prof->RegisterCreateFilter(filter_operation->build_table_idx, filter_operation->probe_columns,
+			                               filter_operation->sequence_number, is_forward_pass);
 		}
 	}
 
@@ -480,8 +482,8 @@ SinkFinalizeType PhysicalCreateFilter::Finalize(Pipeline &pipeline, Event &event
 	gsink.local_data_collections.clear();
 
 	string build_table = filter_operation ? "table_" + std::to_string(filter_operation->build_table_idx) : "unknown";
-	D_PRINTF("[FINALIZE] CREATE_FILTER (build=%s): total_data contains %llu rows, %zu bloom filters", build_table.c_str(),
-	         (unsigned long long)gsink.total_data->Count(), bloom_filter_map.size());
+	D_PRINTF("[FINALIZE] CREATE_FILTER (build=%s): total_data contains %llu rows, %zu bloom filters",
+	         build_table.c_str(), (unsigned long long)gsink.total_data->Count(), bloom_filter_map.size());
 
 	// 2. resize any undersized BFs and rehash from materialized data.
 	// rule: resize iff allocated_bits / actual_rows < 8  (i.e., <8 bits/key -> FPR > ~2%).
@@ -501,9 +503,9 @@ SinkFinalizeType PhysicalCreateFilter::Finalize(Pipeline &pipeline, Event &event
 			if (actual_rows * 8 > allocated_bits) {
 				D_PRINTF("[RESIZE] CREATE_FILTER (build=%s) col=(%llu.%llu) sized_for=%llu actual=%llu "
 				         "allocated_bits=%llu -> rehashing",
-				         build_table.c_str(), (unsigned long long)col.table_index,
-				         (unsigned long long)col.column_index, (unsigned long long)bf.SizedForRows(),
-				         (unsigned long long)actual_rows, (unsigned long long)allocated_bits);
+				         build_table.c_str(), (unsigned long long)col.table_index, (unsigned long long)col.column_index,
+				         (unsigned long long)bf.SizedForRows(), (unsigned long long)actual_rows,
+				         (unsigned long long)allocated_bits);
 				bf.ReinitializeAndRehash(context, actual_rows, *gsink.total_data, {bound_column_indices[i]});
 			}
 		}
@@ -597,12 +599,12 @@ unique_ptr<GlobalSourceState> PhysicalCreateFilter::GetGlobalSourceState(ClientC
 }
 
 unique_ptr<LocalSourceState> PhysicalCreateFilter::GetLocalSourceState(ExecutionContext &context,
-                                                                   GlobalSourceState &gstate) const {
+                                                                       GlobalSourceState &gstate) const {
 	return make_uniq<CreateFilterLocalSourceState>();
 }
 
 SourceResultType PhysicalCreateFilter::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
-                                                   OperatorSourceInput &input) const {
+                                                       OperatorSourceInput &input) const {
 	auto &gstate = sink_state->Cast<CreateFilterGlobalSinkState>();
 	auto &lstate = input.local_state.Cast<CreateFilterLocalSourceState>();
 	auto &state = input.global_state.Cast<CreateFilterGlobalSourceState>();
@@ -687,7 +689,8 @@ void PhysicalCreateFilter::BuildPipelines(Pipeline &current, MetaPipeline &meta_
 		child_meta_pipeline.Build(children[0].get());
 		D_PRINTF("[PIPELINE] CREATE_FILTER (build=%s) child pipeline created", build_table.c_str());
 	} else {
-		D_PRINTF("[PIPELINE] CREATE_FILTER (build=%s) adding existing child pipeline as dependency", build_table.c_str());
+		D_PRINTF("[PIPELINE] CREATE_FILTER (build=%s) adding existing child pipeline as dependency",
+		         build_table.c_str());
 		current.AddDependency(this_pipeline);
 	}
 }

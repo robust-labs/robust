@@ -72,8 +72,9 @@ public:
 		return "table_" + std::to_string(table_idx);
 	}
 
-	shared_ptr<CreateFilterStats> RegisterCreateFilter(idx_t build_table_idx, const vector<ColumnBinding> &probe_columns,
-	                                           idx_t sequence_number, bool is_forward_pass) {
+	shared_ptr<CreateFilterStats> RegisterCreateFilter(idx_t build_table_idx,
+	                                                   const vector<ColumnBinding> &probe_columns,
+	                                                   idx_t sequence_number, bool is_forward_pass) {
 		lock_guard<mutex> lock(stats_lock);
 		auto stats = make_shared_ptr<CreateFilterStats>();
 		stats->sequence_number = sequence_number;
@@ -99,8 +100,8 @@ public:
 		return stats;
 	}
 
-	shared_ptr<ProbeFilterStats> RegisterProbeFilter(idx_t build_table_idx, idx_t probe_table_idx, idx_t sequence_number,
-	                                     bool is_forward_pass) {
+	shared_ptr<ProbeFilterStats> RegisterProbeFilter(idx_t build_table_idx, idx_t probe_table_idx,
+	                                                 idx_t sequence_number, bool is_forward_pass) {
 		lock_guard<mutex> lock(stats_lock);
 		auto stats = make_shared_ptr<ProbeFilterStats>();
 		stats->sequence_number = sequence_number;
@@ -171,10 +172,10 @@ public:
 				idx_t ri = s->rows_in.load();
 				idx_t ro = s->rows_out.load();
 				double sel = ri > 0 ? 100.0 * (double)ro / ri : 0.0;
-				Printer::PrintF("PROBE_FILTER    [%s]: [build=%s, probe=%s] in=%llu, out=%llu, sel=%.1f%%, probe=%lldus",
-				                pass.c_str(), GetName(s->build_table_idx).c_str(),
-				                GetName(s->probe_table_idx).c_str(), (unsigned long long)ri, (unsigned long long)ro,
-				                sel, (long long)s->probe_time_us.load());
+				Printer::PrintF(
+				    "PROBE_FILTER    [%s]: [build=%s, probe=%s] in=%llu, out=%llu, sel=%.1f%%, probe=%lldus",
+				    pass.c_str(), GetName(s->build_table_idx).c_str(), GetName(s->probe_table_idx).c_str(),
+				    (unsigned long long)ri, (unsigned long long)ro, sel, (long long)s->probe_time_us.load());
 				if (s->is_forward_pass) {
 					fwd_rows_in += ri;
 					fwd_rows_out += ro;
@@ -196,8 +197,7 @@ public:
 			if (rows_in > 0) {
 				double filtered_pct = 100.0 * (1.0 - (double)rows_out / rows_in);
 				Printer::PrintF("  %s probe: %lld us, filtered: %lld / %lld rows (%.1f%% removed)", label,
-				                (long long)probe_us, (long long)(rows_in - rows_out), (long long)rows_in,
-				                filtered_pct);
+				                (long long)probe_us, (long long)(rows_in - rows_out), (long long)rows_in, filtered_pct);
 			}
 		};
 

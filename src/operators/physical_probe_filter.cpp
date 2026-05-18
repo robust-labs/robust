@@ -11,7 +11,8 @@
 namespace duckdb {
 
 PhysicalProbeFilter::PhysicalProbeFilter(PhysicalPlan &physical_plan, shared_ptr<FilterOperation> filter_operation,
-                             vector<LogicalType> types, idx_t estimated_cardinality, vector<idx_t> bound_column_indices)
+                                         vector<LogicalType> types, idx_t estimated_cardinality,
+                                         vector<idx_t> bound_column_indices)
     : CachingPhysicalOperator(physical_plan, PhysicalOperatorType::EXTENSION, std::move(types), estimated_cardinality),
       filter_operation(std::move(filter_operation)), bound_column_indices(std::move(bound_column_indices)) {
 }
@@ -59,7 +60,7 @@ unique_ptr<OperatorState> PhysicalProbeFilter::GetOperatorState(ExecutionContext
 }
 
 OperatorResultType PhysicalProbeFilter::ExecuteInternal(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
-                                                  GlobalOperatorState &gstate, OperatorState &state_p) const {
+                                                        GlobalOperatorState &gstate, OperatorState &state_p) const {
 	// passthrough mode: filters pushed to scan, just forward data
 	if (is_passthrough) {
 		chunk.Reference(input);
@@ -70,8 +71,9 @@ OperatorResultType PhysicalProbeFilter::ExecuteInternal(ExecutionContext &contex
 		profiling_checked = true;
 		auto prof = GetRobustProfilingState(context.client);
 		if (prof) {
-			profiling_stats = prof->RegisterProbeFilter(filter_operation->build_table_idx, filter_operation->probe_table_idx,
-			                                      filter_operation->sequence_number, filter_operation->is_forward_pass);
+			profiling_stats =
+			    prof->RegisterProbeFilter(filter_operation->build_table_idx, filter_operation->probe_table_idx,
+			                              filter_operation->sequence_number, filter_operation->is_forward_pass);
 		}
 	}
 
@@ -93,13 +95,14 @@ OperatorResultType PhysicalProbeFilter::ExecuteInternal(ExecutionContext &contex
 				for (auto *create_filter : related_create_filter_vec) {
 					auto bf = create_filter->GetBloomFilter(build_col);
 					if (bf) {
-						string build_table = create_filter->filter_operation
-						                         ? "table_" + std::to_string(create_filter->filter_operation->build_table_idx)
-						                         : "unknown";
-						D_PRINTF(
-						    "[EXEC_INTERNAL] PROBE_FILTER found bloom filter for col(%llu,%llu) from CREATE_FILTER (build=%s)",
-						    (unsigned long long)build_col.table_index, (unsigned long long)build_col.column_index,
-						    build_table.c_str());
+						string build_table =
+						    create_filter->filter_operation
+						        ? "table_" + std::to_string(create_filter->filter_operation->build_table_idx)
+						        : "unknown";
+						D_PRINTF("[EXEC_INTERNAL] PROBE_FILTER found bloom filter for col(%llu,%llu) from "
+						         "CREATE_FILTER (build=%s)",
+						         (unsigned long long)build_col.table_index, (unsigned long long)build_col.column_index,
+						         build_table.c_str());
 						state.bloom_filters.push_back(bf);
 						break; // found the filter for this column
 					}
@@ -114,8 +117,8 @@ OperatorResultType PhysicalProbeFilter::ExecuteInternal(ExecutionContext &contex
 
 	// if no bloom filters or no input, just pass through
 	if (state.bloom_filters.empty() || row_num == 0) {
-		D_PRINTF("[EXEC_INTERNAL] PROBE_FILTER (probe=%s) No bloom filter input/empty, row_num = %llu", table_name.c_str(),
-		         (unsigned long long)row_num);
+		D_PRINTF("[EXEC_INTERNAL] PROBE_FILTER (probe=%s) No bloom filter input/empty, row_num = %llu",
+		         table_name.c_str(), (unsigned long long)row_num);
 		if (profiling_stats) {
 			profiling_stats->rows_in.fetch_add(row_num, std::memory_order_relaxed);
 			profiling_stats->rows_out.fetch_add(row_num, std::memory_order_relaxed);
@@ -144,7 +147,8 @@ OperatorResultType PhysicalProbeFilter::ExecuteInternal(ExecutionContext &contex
 
 		// check if bloom filter is empty (no data inserted)
 		if (bf->IsEmpty()) {
-			string build_table = filter_operation ? "table_" + std::to_string(filter_operation->build_table_idx) : "unknown";
+			string build_table =
+			    filter_operation ? "table_" + std::to_string(filter_operation->build_table_idx) : "unknown";
 			D_PRINTF("Bloom filter empty for %s", build_table.c_str());
 			// signal any CREATE_FILTER siblings targeting this probe that it will be empty
 			auto reg = GetProbeEmptyRegistry(context.client);
@@ -161,9 +165,9 @@ OperatorResultType PhysicalProbeFilter::ExecuteInternal(ExecutionContext &contex
 			return OperatorResultType::NEED_MORE_INPUT;
 		}
 
-		// string probe_table = filter_operation ? "table_" + std::to_string(filter_operation->probe_table_idx) : "unknown";
-		// for (int i = 0; i < bound_column_indices.size(); i++) {
-		// 	printf("bound columns for %s - %llu\n", probe_table.c_str(), bound_column_indices[i]);
+		// string probe_table = filter_operation ? "table_" + std::to_string(filter_operation->probe_table_idx) :
+		// "unknown"; for (int i = 0; i < bound_column_indices.size(); i++) { 	printf("bound columns for %s - %llu\n",
+		// probe_table.c_str(), bound_column_indices[i]);
 		// }
 
 		// lookup directly into selection vector
@@ -219,8 +223,9 @@ void PhysicalProbeFilter::BuildPipelines(Pipeline &current, MetaPipeline &meta_p
 	state.AddPipelineOperator(current, *this);
 
 #ifdef DEBUG
-	Printer::Print(StringUtil::Format("[PIPELINE] PROBE_FILTER (probe=%s, this=%s) added to current pipeline as operator",
-	                                  probe_table.c_str(), ptr_str));
+	Printer::Print(
+	    StringUtil::Format("[PIPELINE] PROBE_FILTER (probe=%s, this=%s) added to current pipeline as operator",
+	                       probe_table.c_str(), ptr_str));
 	Printer::Print(StringUtil::Format("[PIPELINE] PROBE_FILTER (probe=%s) has %zu related CREATE_FILTER operators",
 	                                  probe_table.c_str(), related_create_filter_vec.size()));
 #endif

@@ -23,7 +23,7 @@ RUN_BASELINE=true
 RUN_ROBUST=true
 FORWARD_ONLY=false
 HEURISTIC=""
-OUT_DIR="$PROJECT_ROOT/benchmark_results"
+OUT_DIR="$PROJECT_ROOT/results/benchmark_results"
 METRIC="min"
 ROBUST_FIRST=false
 

@@ -8,7 +8,8 @@ LogicalProbeFilter::LogicalProbeFilter() : LogicalExtensionOperator() {
 	this->type = LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR;
 }
 
-LogicalProbeFilter::LogicalProbeFilter(const FilterOperation &filter_op) : LogicalExtensionOperator(), filter_operation(filter_op) {
+LogicalProbeFilter::LogicalProbeFilter(const FilterOperation &filter_op)
+    : LogicalExtensionOperator(), filter_operation(filter_op) {
 	this->type = LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR;
 }
 
