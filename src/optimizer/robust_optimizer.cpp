@@ -56,9 +56,9 @@ void RobustOptimizerContextState::ExtractOperatorsRecursive(LogicalOperator &pla
 		case JoinType::SEMI:
 		case JoinType::RIGHT_SEMI: {
 			if (std::any_of(join.conditions.begin(), join.conditions.end(), [](const JoinCondition &jc) {
-				    return jc.GetComparisonType() == ExpressionType::COMPARE_EQUAL &&
-				           jc.GetLHS().type == ExpressionType::BOUND_COLUMN_REF &&
-				           jc.GetRHS().type == ExpressionType::BOUND_COLUMN_REF;
+				    return jc.comparison == ExpressionType::COMPARE_EQUAL &&
+				           jc.left->type == ExpressionType::BOUND_COLUMN_REF &&
+				           jc.right->type == ExpressionType::BOUND_COLUMN_REF;
 			    })) {
 				// JoinEdge edge(join);
 				join_ops.push_back(op);
@@ -174,12 +174,12 @@ vector<JoinEdge> RobustOptimizerContextState::CreateJoinEdges(vector<LogicalOper
 		vector<ColumnBinding> resolved_left_columns, resolved_right_columns;
 
 		for (const JoinCondition &cond : join.conditions) {
-			if (cond.GetComparisonType() == ExpressionType::COMPARE_EQUAL &&
-			    cond.GetLHS().type == ExpressionType::BOUND_COLUMN_REF &&
-			    cond.GetRHS().type == ExpressionType::BOUND_COLUMN_REF) {
+			if (cond.comparison == ExpressionType::COMPARE_EQUAL &&
+			    cond.left->type == ExpressionType::BOUND_COLUMN_REF &&
+			    cond.right->type == ExpressionType::BOUND_COLUMN_REF) {
 				// store original bindings
-				ColumnBinding left_binding = cond.GetLHS().Cast<BoundColumnRefExpression>().binding;
-				ColumnBinding right_binding = cond.GetRHS().Cast<BoundColumnRefExpression>().binding;
+				ColumnBinding left_binding = cond.left->Cast<BoundColumnRefExpression>().binding;
+				ColumnBinding right_binding = cond.right->Cast<BoundColumnRefExpression>().binding;
 
 				left_columns.push_back(left_binding);
 				right_columns.push_back(right_binding);
@@ -555,18 +555,18 @@ static void PhysicalDAGDFS(LogicalOperator *op, TableManager &table_mgr, RobustO
 
 		// process each join condition
 		for (const JoinCondition &cond : join.conditions) {
-			if (cond.GetComparisonType() != ExpressionType::COMPARE_EQUAL) {
+			if (cond.comparison != ExpressionType::COMPARE_EQUAL) {
 				continue;
 			}
-			if (cond.GetLHS().type != ExpressionType::BOUND_COLUMN_REF ||
-			    cond.GetRHS().type != ExpressionType::BOUND_COLUMN_REF) {
+			if (cond.left->type != ExpressionType::BOUND_COLUMN_REF ||
+			    cond.right->type != ExpressionType::BOUND_COLUMN_REF) {
 				continue;
 			}
 
 			ColumnBinding left_resolved =
-			    state.ResolveColumnBinding(cond.GetLHS().Cast<BoundColumnRefExpression>().binding);
+			    state.ResolveColumnBinding(cond.left->Cast<BoundColumnRefExpression>().binding);
 			ColumnBinding right_resolved =
-			    state.ResolveColumnBinding(cond.GetRHS().Cast<BoundColumnRefExpression>().binding);
+			    state.ResolveColumnBinding(cond.right->Cast<BoundColumnRefExpression>().binding);
 
 			// add to equivalence classes
 			ColKey left_key = {left_resolved.table_index, left_resolved.column_index};
