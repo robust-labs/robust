@@ -194,7 +194,6 @@ Output: `benchmark_results/{baseline_raw.tsv, robust_raw.tsv, comparison.tsv}`.
 3. **Backward pass (root → leaves).** Each filter is broadcast across its equivalence class. If tables A, B, C all join on the same key and a filter was built from C, it's pushed to A and B as well — even though they never directly joined with C.
 4. **Scan pushdown.** Built filters are pushed into DuckDB's `dynamic_filters` infrastructure via `BFTableFilter` + `SelectivityOptionalFilter`, so the storage layer can skip rows/segments before they're decompressed.
 
-The backward pass is the load-bearing mechanism — it's the difference between baseline-equivalent forward-only performance and the 23× wins on cardinality-explosive queries.
 
 ## Bloom filter implementation
 
